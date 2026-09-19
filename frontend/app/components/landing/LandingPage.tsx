@@ -1,17 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
-import { ChevronDown } from 'lucide-react';
 
 gsap.registerPlugin(ScrollTrigger);
 
 export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [scrollHintVisible, setScrollHintVisible] = useState(true);
 
   useEffect(() => {
     // 1. Initialize Lenis for buttery-smooth momentum scrolling
@@ -39,7 +37,7 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
       if (!video) return;
 
       const initScrollScrub = () => {
-        const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 10.08;
+        const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 10.0;
         const playhead = { time: 0 };
         let isSeekingFrame = false;
         let pendingTime = 0;
@@ -53,13 +51,6 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
             start: "top top",
             end: "bottom bottom",
             scrub: 1.0,
-            onUpdate: (self) => {
-              if (self.progress > 0.05) {
-                setScrollHintVisible(false);
-              } else {
-                setScrollHintVisible(true);
-              }
-            }
           },
           onUpdate: () => {
             pendingTime = playhead.time;
@@ -131,20 +122,6 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
           preload="auto"
           autoPlay={false}
         />
-
-
-
-        {/* Scroll down guidance indicator */}
-        <div
-          className={`absolute bottom-12 flex flex-col items-center gap-2 pointer-events-none transition-all duration-700 ${
-            scrollHintVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <div className="px-5 py-2 rounded-full bg-black/60 border border-white/10 backdrop-blur-md flex items-center gap-2 shadow-2xl">
-            <span className="text-xs font-semibold tracking-widest text-slate-300 uppercase">Scroll to Explore</span>
-            <ChevronDown className="w-4 h-4 text-blue-400 animate-bounce" />
-          </div>
-        </div>
 
         {/* Launch Website Button Overlay */}
         <div className="absolute bottom-20 w-full flex flex-col items-center justify-center gap-4 launch-btn-container z-30">
