@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
+import { ShinyButton } from "@/components/ui/shiny-button";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -117,6 +118,12 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
           ref={videoRef}
           src="/landing.mp4"
           className="w-full h-full object-cover pointer-events-none"
+          style={{
+            imageRendering: '-webkit-optimize-contrast',
+            transform: 'translate3d(0, 0, 0)',
+            backfaceVisibility: 'hidden',
+            WebkitBackfaceVisibility: 'hidden',
+          }}
           muted
           playsInline
           preload="auto"
@@ -125,14 +132,9 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
 
         {/* Launch Website Button Overlay */}
         <div className="absolute bottom-16 w-full flex flex-col items-center justify-center launch-btn-container z-30">
-          <button
-            onClick={handleLaunch}
-            className="group relative px-10 py-4 rounded-full font-semibold text-lg tracking-widest text-white uppercase backdrop-blur-xl bg-blue-600/20 hover:bg-blue-600/35 border border-blue-400/40 hover:border-blue-300/70 shadow-[0_8px_32px_0_rgba(37,99,235,0.25)] hover:shadow-[0_8px_32px_0_rgba(59,130,246,0.45)] transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer"
-          >
-            <span className="relative z-10 flex items-center justify-center text-blue-100 group-hover:text-white transition-colors duration-200">
-              Launch Forensic Suite
-            </span>
-          </button>
+          <ShinyButton onClick={handleLaunch}>
+            Launch Forensic Suite
+          </ShinyButton>
         </div>
       </div>
     </div>

@@ -27,7 +27,14 @@ interface AuthorityState {
 interface CaseWizardProps {
   currentStep?: 1 | 2 | 3;
   onStepChange?: (step: 1 | 2 | 3) => void;
-  onComplete?: (caseId: string, seedAddress: string, firNumber: string, ioDesignation: string) => void;
+  onComplete?: (caseId: string, seedAddress: string, firNumber: string, ioDesignation: string, statuteRef: string, policeStation: string, jurisdictionBench: string, disputedAmount: string) => void;
+  initialOfficerDetails?: {
+    officerName?: string;
+    badgeNumber?: string;
+    policeStation?: string;
+    rank?: string;
+  };
+  onBackToPortal?: () => void;
 }
 
 const STATUTE_OPTIONS = [
@@ -61,12 +68,12 @@ const STATUTE_OPTIONS = [
   }
 ];
 
-
-
 export default function CaseWizard({ 
   currentStep: propStep, 
   onStepChange, 
-  onComplete 
+  onComplete,
+  initialOfficerDetails,
+  onBackToPortal
 }: CaseWizardProps) {
   const [internalStep, setInternalStep] = useState<1 | 2 | 3>(1);
   const currentStep = propStep ?? internalStep;
@@ -76,11 +83,15 @@ export default function CaseWizard({
     else setInternalStep(step);
   };
 
+  const initialIo = initialOfficerDetails?.officerName 
+    ? `${initialOfficerDetails.officerName}${initialOfficerDetails.badgeNumber ? ` (Badge #${initialOfficerDetails.badgeNumber})` : ''}`
+    : '';
+
   const [authority, setAuthority] = useState<AuthorityState>({
     statuteRef: 'Sec 94 BNSS',
     firNumber: '',
-    policeStation: '',
-    ioDesignation: '',
+    policeStation: initialOfficerDetails?.policeStation || '',
+    ioDesignation: initialIo,
     jurisdictionBench: '',
     incidentType: ''
   });
@@ -117,7 +128,7 @@ export default function CaseWizard({
   const handleFinalSubmit = () => {
     if (!isStep1Valid || !isStep2Valid || !isStep3Valid) return;
     const newCaseId = `PHT-${Math.floor(1000 + Math.random() * 9000)}`;
-    onComplete?.(newCaseId, seedAddress, authority.firNumber, authority.ioDesignation);
+    onComplete?.(newCaseId, seedAddress, authority.firNumber, authority.ioDesignation, authority.statuteRef, authority.policeStation, authority.jurisdictionBench, disputedAmount);
   };
 
   return (
@@ -138,26 +149,40 @@ export default function CaseWizard({
           </div>
         </div>
 
-        {/* Progress Pills */}
-        <div className="flex items-center space-x-2">
-          {[1, 2, 3].map((step) => (
+        {/* Actions & Progress Pills */}
+        <div className="flex items-center space-x-4">
+          {onBackToPortal && (
             <button
-              key={step}
-              onClick={() => {
-                if (step === 1) setStep(1);
-                if (step === 2 && isStep1Valid) setStep(2);
-                if (step === 3 && isStep1Valid && isStep2Valid) setStep(3);
-              }}
-              className={`h-1.5 rounded-full transition-all duration-200 ${
-                currentStep === step 
-                  ? 'w-8 bg-[#1B729E]' 
-                  : step < currentStep 
-                    ? 'w-4 bg-emerald-600' 
-                    : 'w-4 bg-slate-200'
-              }`}
-              title={`Jump to Step ${step}`}
-            />
-          ))}
+              type="button"
+              onClick={onBackToPortal}
+              className="px-3 py-1 rounded-lg border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold flex items-center transition shadow-2xs"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 mr-1" />
+              Switch Portal
+            </button>
+          )}
+
+          {/* Progress Pills */}
+          <div className="flex items-center space-x-2">
+            {[1, 2, 3].map((step) => (
+              <button
+                key={step}
+                onClick={() => {
+                  if (step === 1) setStep(1);
+                  if (step === 2 && isStep1Valid) setStep(2);
+                  if (step === 3 && isStep1Valid && isStep2Valid) setStep(3);
+                }}
+                className={`h-1.5 rounded-full transition-all duration-200 ${
+                  currentStep === step 
+                    ? 'w-8 bg-[#1B729E]' 
+                    : step < currentStep 
+                      ? 'w-4 bg-emerald-600' 
+                      : 'w-4 bg-slate-200'
+                }`}
+                title={`Jump to Step ${step}`}
+              />
+            ))}
+          </div>
         </div>
       </div>
 

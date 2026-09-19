@@ -1,3 +1,8 @@
+import json
+import os
+import tempfile
+from pathlib import Path
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -9,6 +14,9 @@ class CaseResponse(BaseModel):
     seed_address: str
     fir_number: str = ""
     io_designation: str = ""
+    police_station: str = ""
+    jurisdiction_bench: str = ""
+    disputed_value_inr: str = ""
 
 class CaseCreateRequest(BaseModel):
     case_id: str
@@ -16,6 +24,11 @@ class CaseCreateRequest(BaseModel):
     seed_address: str
     fir_number: str = ""
     io_designation: str = ""
+    police_station: str = ""
+    jurisdiction_bench: str = ""
+    disputed_value_inr: str = ""
+
+CASES_FILE = Path(__file__).resolve().parents[3] / "storage" / "cases.json"
 
 # Mock database of cases
 CASES_DB = {
@@ -27,6 +40,15 @@ CASES_DB = {
         "io_designation": "Inspector A. Sharma"
     }
 }
+
+try:
+    if CASES_FILE.exists():
+        with open(CASES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                CASES_DB.update(data)
+except Exception:
+    pass
 
 @router.get("/cases/{case_id}", response_model=CaseResponse)
 async def get_case(case_id: str):
@@ -45,4 +67,12 @@ async def get_case(case_id: str):
 @router.post("/cases/", response_model=CaseResponse)
 async def create_case(case_data: CaseCreateRequest):
     CASES_DB[case_data.case_id] = case_data.dict()
+    try:
+        CASES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(dir=CASES_FILE.parent, suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(CASES_DB, f)
+        os.replace(temp_path, CASES_FILE)
+    except Exception as e:
+        print(f"Failed to persist cases: {e}")
     return CASES_DB[case_data.case_id]

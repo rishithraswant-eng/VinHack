@@ -9,7 +9,11 @@ import {
   Network, 
   Settings, 
   LogOut, 
-  CheckCircle2
+  CheckCircle2,
+  Globe,
+  ShieldCheck,
+  ArrowLeftRight,
+  User
 } from 'lucide-react';
 
 interface AppShellProps {
@@ -17,21 +21,38 @@ interface AppShellProps {
   currentStep?: number;
   onStepChange?: (step: number) => void;
   activeCase?: { caseId: string; seedAddress: string } | null;
+  userRole?: 'citizen' | 'lea';
+  officerDetails?: {
+    officerName?: string;
+    badgeNumber?: string;
+    policeStation?: string;
+  };
+  onSwitchPortal?: () => void;
 }
 
-const STAGES = [
+const LEA_STAGES = [
   { id: 1, label: "Statutory Reference", icon: Scale, subtitle: "Legal Mandate & FIR" },
   { id: 2, label: "Investigating Unit", icon: Building2, subtitle: "Police Station & Officer" },
   { id: 3, label: "Target Seed Address", icon: Coins, subtitle: "Suspect Wallet Address" },
   { id: 4, label: "Graph Resolution", icon: Network, subtitle: "On-Chain Attribution" },
 ];
 
+const CITIZEN_STAGES = [
+  { id: 1, label: "Target Seed Ingestion", icon: Coins, subtitle: "Suspect / Stolen Wallet" },
+  { id: 4, label: "Graph Resolution", icon: Network, subtitle: "Attributed VASP Off-Ramp" },
+];
+
 export default function AppShell({ 
   children, 
   currentStep = 1, 
   onStepChange,
-  activeCase
+  activeCase,
+  userRole = 'lea',
+  officerDetails,
+  onSwitchPortal
 }: AppShellProps) {
+  const isCitizen = userRole === 'citizen';
+  const stages = isCitizen ? CITIZEN_STAGES : LEA_STAGES;
   const activeStage = activeCase ? 4 : currentStep;
 
   return (
@@ -42,26 +63,32 @@ export default function AppShell({
         
         {/* Brand Header */}
         <div className="h-20 flex items-center px-6 border-b border-slate-200 space-x-3.5">
-          <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center shadow-xs">
-            <Hexagon className="w-5 h-5 text-[#1B729E]" strokeWidth={2.2} />
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-xs border ${
+            isCitizen ? 'bg-sky-50 border-sky-200 text-[#1B729E]' : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+          }`}>
+            <Hexagon className="w-5 h-5" strokeWidth={2.2} />
           </div>
           <div className="flex flex-col">
-            <span className="text-base tracking-tight font-bold text-slate-900">PHANTASM</span>
-            <span className="text-[10px] font-mono tracking-wider text-slate-500 uppercase font-semibold">LEGAL INTELLIGENCE</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-base tracking-tight font-bold text-slate-900">PHANTASM</span>
+            </div>
+            <span className="text-[10px] font-mono tracking-wider text-slate-500 uppercase font-semibold">
+              {isCitizen ? "CITIZEN TRACE PORTAL" : "LEGAL FORENSICS SUITE"}
+            </span>
           </div>
         </div>
         
         {/* Navigation Stages */}
         <nav className="flex-1 py-6 px-3.5 space-y-1.5">
           <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-            Case Setup Steps
+            {isCitizen ? "Direct Ingestion Steps" : "Case Setup Steps"}
           </div>
 
-          {STAGES.map((stage) => {
+          {stages.map((stage) => {
             const Icon = stage.icon;
             const isActive = activeStage === stage.id;
             const isCompleted = activeStage > stage.id;
-            const isClickable = stage.id <= (activeCase ? 4 : 3) && onStepChange;
+            const isClickable = stage.id <= (activeCase ? 4 : (isCitizen ? 1 : 3)) && onStepChange;
 
             return (
               <button
@@ -109,15 +136,27 @@ export default function AppShell({
           })}
         </nav>
         
-        {/* Bottom Settings Link */}
-        <div className="p-3.5 border-t border-slate-200">
-          <button 
-            type="button"
-            className="w-full flex items-center px-3 py-2.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors group text-xs font-medium"
-          >
-            <Settings className="w-4 h-4 mr-2.5 text-slate-500 group-hover:text-slate-800" />
-            <span>Settings & API Keys</span>
-          </button>
+        {/* Bottom Switch Portal Link */}
+        <div className="p-3.5 border-t border-slate-200 space-y-1">
+          {onSwitchPortal && (
+            <button 
+              type="button"
+              onClick={onSwitchPortal}
+              className="w-full flex items-center justify-between px-3 py-2 text-slate-700 hover:text-[#1B729E] hover:bg-sky-50 rounded-lg transition-colors group text-xs font-medium border border-slate-200"
+            >
+              <div className="flex items-center">
+                <ArrowLeftRight className="w-4 h-4 mr-2.5 text-slate-500 group-hover:text-[#1B729E]" />
+                <span>Switch Portal Tier</span>
+              </div>
+              <span className="text-[10px] font-mono uppercase text-slate-400">
+                {isCitizen ? "→ LEA" : "→ Citizen"}
+              </span>
+            </button>
+          )}
+
+          <div className="px-3 pt-2 text-[10px] text-slate-400 font-mono text-center">
+            {isCitizen ? "Public Mode · No FIR Required" : "Section 94 BNSS Compliant"}
+          </div>
         </div>
       </aside>
 
@@ -127,26 +166,62 @@ export default function AppShell({
         {/* Top Header */}
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 z-10 shadow-2xs">
           <div>
-            <h2 className="font-display text-lg font-bold tracking-wider uppercase text-slate-900">
-              Investigation Suite
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-display text-lg font-bold tracking-wider uppercase text-slate-900">
+                {isCitizen ? "Citizen Asset Investigation" : "Law Enforcement Suite"}
+              </h2>
+              <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold border ${
+                isCitizen 
+                  ? 'bg-sky-50 text-[#1B729E] border-sky-200' 
+                  : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+              }`}>
+                {isCitizen ? "Citizen Mode" : "Official LEA"}
+              </span>
+            </div>
             <p className="text-[11px] text-slate-500">
-              Lawful Attribution & Crypto Asset Tracking
+              {isCitizen ? "Direct Blockchain Ingestion & Algorithmic Attribution" : "Lawful Attribution & Crypto Asset Tracking"}
             </p>
           </div>
 
-          {/* Officer Session Indicator */}
+          {/* User / Officer Session Indicator */}
           <div className="flex items-center space-x-3.5">
-            <div className="flex flex-col items-end">
-              <span className="text-xs font-semibold text-slate-800">Offc. A. Sharma (IO)</span>
-              <span className="text-[11px] text-[#1B729E] font-mono font-medium">SHM-8891-ND</span>
-            </div>
-            <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 font-mono text-xs font-semibold">
-              AS
-            </div>
-            <button className="p-1.5 text-slate-400 hover:text-slate-700 transition-colors" title="End Session">
-              <LogOut className="w-4 h-4" />
-            </button>
+            {isCitizen ? (
+              <div className="flex items-center space-x-2.5 bg-slate-100/80 px-3 py-1.5 rounded-xl border border-slate-200">
+                <div className="w-7 h-7 rounded-lg bg-sky-100 text-[#1B729E] flex items-center justify-center font-bold text-xs">
+                  <User className="w-4 h-4" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-slate-800">Public Investigator</span>
+                  <span className="text-[10px] text-slate-500 font-mono">Citizen Ingestion</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-2.5">
+                <div className="flex flex-col items-end">
+                  <span className="text-xs font-semibold text-slate-800">
+                    {officerDetails?.officerName ? officerDetails.officerName : "Authorized Officer (IO)"}
+                  </span>
+                  <span className="text-[11px] text-[#1B729E] font-mono font-medium">
+                    {officerDetails?.badgeNumber ? `Badge #${officerDetails.badgeNumber}` : "LEA Unit"}
+                  </span>
+                </div>
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 font-mono text-xs font-semibold">
+                  {officerDetails?.officerName 
+                    ? officerDetails.officerName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() 
+                    : "IO"}
+                </div>
+              </div>
+            )}
+
+            {onSwitchPortal && (
+              <button 
+                onClick={onSwitchPortal}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" 
+                title="Switch Portal or Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </header>
 
@@ -159,3 +234,4 @@ export default function AppShell({
     </div>
   );
 }
+
