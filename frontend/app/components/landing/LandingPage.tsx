@@ -124,23 +124,15 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
         />
 
         {/* Launch Website Button Overlay */}
-        <div className="absolute bottom-20 w-full flex flex-col items-center justify-center gap-4 launch-btn-container z-30">
+        <div className="absolute bottom-16 w-full flex flex-col items-center justify-center launch-btn-container z-30">
           <button
             onClick={handleLaunch}
-            className="group relative px-12 py-5 rounded-full font-extrabold text-xl tracking-wider text-white uppercase overflow-hidden shadow-[0_0_50px_rgba(37,99,235,0.7)] transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer"
+            className="group relative px-10 py-4 rounded-full font-semibold text-lg tracking-widest text-white uppercase backdrop-blur-xl bg-blue-600/20 hover:bg-blue-600/35 border border-blue-400/40 hover:border-blue-300/70 shadow-[0_8px_32px_0_rgba(37,99,235,0.25)] hover:shadow-[0_8px_32px_0_rgba(59,130,246,0.45)] transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer"
           >
-            {/* Animated Glow Border & Gradient */}
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 transition-all duration-300 group-hover:opacity-90" />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.35),transparent_70%)]" />
-            <div className="absolute inset-[1px] rounded-full bg-slate-950/40 backdrop-blur-md -z-0" />
-            
-            <span className="relative z-10 flex items-center justify-center">
+            <span className="relative z-10 flex items-center justify-center text-blue-100 group-hover:text-white transition-colors duration-200">
               Launch Forensic Suite
             </span>
           </button>
-          <p className="text-xs text-slate-400 font-mono tracking-widest uppercase">
-            Sec 94 BNSS &bull; 65B IT Act Certified
-          </p>
         </div>
       </div>
     </div>
