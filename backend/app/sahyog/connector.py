@@ -1,7 +1,9 @@
 import uuid
-from typing import Optional
+
 from pydantic import BaseModel
+
 from app.attribution.models import TraceResult
+
 
 class DispatchResult(BaseModel):
     status: str

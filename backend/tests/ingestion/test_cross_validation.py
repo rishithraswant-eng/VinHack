@@ -1,6 +1,6 @@
-import pytest
 from app.ingestion.cross_validation import CrossValidator
 from app.models.canonical import ValidationStatus
+
 
 def test_canonical_digest():
     digest1 = CrossValidator.compute_canonical_digest(1, 100, "hash", "A", "B", "10", "BTC")

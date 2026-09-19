@@ -1,14 +1,16 @@
 import math
-from typing import List, Tuple, Dict, Any
+from typing import Any
+
 from app.core.config import settings
 
+
 class HawkesEngine:
-    def __init__(self, mu: float = None, alpha: float = None, beta: float = None):
+    def __init__(self, mu: float | None = None, alpha: float | None = None, beta: float | None = None):
         self.mu = mu if mu is not None else settings.HAWKES_MU
         self.alpha = alpha if alpha is not None else settings.HAWKES_ALPHA
         self.beta = beta if beta is not None else settings.HAWKES_BETA
 
-    def _compute_intensity(self, t: float, history: List[float]) -> float:
+    def _compute_intensity(self, t: float, history: list[float]) -> float:
         """
         λ(t) = μ + Σ α·e^(−β(t−tᵢ)) for all t_i < t
         """
@@ -18,7 +20,7 @@ class HawkesEngine:
                 lambda_t += self.alpha * math.exp(-self.beta * (t - t_i))
         return lambda_t
 
-    def analyze_transactions(self, transactions: List[Tuple[float, float, str, str]]) -> List[Dict[str, Any]]:
+    def analyze_transactions(self, transactions: list[tuple[float, float, str, str]]) -> list[dict[str, Any]]:
         """
         Input: ordered list of (timestamp, amount, from_addr, to_addr)
         Output: list of dicts with 'noise_score' and 'pruned' for each transaction.
@@ -29,9 +31,9 @@ class HawkesEngine:
         results = []
         
         # Keep track of history per sender address
-        history_by_sender: Dict[str, List[float]] = {}
+        history_by_sender: dict[str, list[float]] = {}
         # Keep track of peel-chain-like behavior (sender -> recipient amounts)
-        amounts_by_sender: Dict[str, List[float]] = {}
+        amounts_by_sender: dict[str, list[float]] = {}
         
         for t, amount, from_addr, to_addr in transactions:
             if from_addr not in history_by_sender:

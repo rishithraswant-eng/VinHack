@@ -1,5 +1,5 @@
-import pytest
 from app.attribution.monte_carlo import MonteCarloScorer
+
 
 def test_monte_carlo_confidence():
     scorer = MonteCarloScorer(num_walks=100, threshold=0.95)

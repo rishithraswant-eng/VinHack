@@ -1,8 +1,10 @@
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
+
 from app.core.config import settings
+
 try:
-    from neo4j import AsyncGraphDatabase, AsyncSession
+    from neo4j import AsyncGraphDatabase
 except ImportError:
     pass # Will be handled if not installed, but for mock tests we'll use a MockDriver
 
@@ -77,7 +79,7 @@ class Neo4jRouter:
             for q in queries:
                 await session.run(q)
 
-    async def project_address(self, chain_id: int, address_data: Dict[str, Any]):
+    async def project_address(self, chain_id: int, address_data: dict[str, Any]):
         """Idempotent MERGE projection from PostgreSQL -> Neo4j for Address"""
         db = self.get_database_for_chain(chain_id)
         query = """
@@ -92,7 +94,7 @@ class Neo4jRouter:
         async with self.driver.session(database=db) as session:
             await session.run(query, **address_data)
 
-    async def project_transaction(self, chain_id: int, tx_data: Dict[str, Any]):
+    async def project_transaction(self, chain_id: int, tx_data: dict[str, Any]):
         """Idempotent MERGE projection from PostgreSQL -> Neo4j for Transaction"""
         db = self.get_database_for_chain(chain_id)
         query = """
@@ -105,7 +107,7 @@ class Neo4jRouter:
         async with self.driver.session(database=db) as session:
             await session.run(query, **tx_data)
 
-    async def project_transfer(self, chain_id: int, transfer_data: Dict[str, Any]):
+    async def project_transfer(self, chain_id: int, transfer_data: dict[str, Any]):
         """Idempotent MERGE projection for Transfer (Edge)"""
         db = self.get_database_for_chain(chain_id)
         query = """
@@ -147,7 +149,7 @@ class Neo4jRouter:
             return await session.run(query, src_id=src_id, dst_id=dst_id, max_depth=max_depth)
 
     # Q3: Common spenders/receivers
-    async def q3_common_counterparties(self, chain_id: int, addresses: List[str]):
+    async def q3_common_counterparties(self, chain_id: int, addresses: list[str]):
         db = self.get_database_for_chain(chain_id)
         query = """
         UNWIND $addresses AS addr_id

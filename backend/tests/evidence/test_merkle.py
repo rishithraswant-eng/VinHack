@@ -1,5 +1,5 @@
-import pytest
 from app.evidence.merkle import MerkleEngine, MerkleProof
+
 
 def test_merkle_proof_verification():
     txs = ["tx1", "tx2", "tx3", "tx4"]

@@ -1,8 +1,11 @@
-import pytest
 import os
 import shutil
+
+import pytest
+
+from app.attribution.models import ConfidenceResult, TraceResult
 from app.evidence.sealer import EvidenceSealer
-from app.attribution.models import TraceResult, ConfidenceResult
+
 
 def test_evidence_immutability():
     storage_dir = "tests/test_storage"
@@ -33,9 +36,8 @@ def test_evidence_immutability():
     # Attempting to overwrite by mocking a sealer with the same snapshot_id
     # We will just write to the same path to simulate an overwrite attempt
     # Since the file is read-only on OS level, standard open(w) will raise PermissionError
-    with pytest.raises(PermissionError):
-        with open(file_path, "w") as f:
-            f.write("tampered")
+    with pytest.raises(PermissionError), open(file_path, "w") as f:
+        f.write("tampered")
             
     # Cleanup
     os.chmod(file_path, 0o777)

@@ -1,11 +1,12 @@
 import os
-from datetime import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
+
 from reportlab.lib import colors
-from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table
+
 from app.evidence.sealer import SealedEvidence
+
 
 class DossierGenerator:
     def __init__(self, output_dir: str = "storage/dossiers"):
@@ -33,7 +34,7 @@ class DossierGenerator:
         elements = []
         
         # Header
-        elements.append(Paragraph(f"FORENSIC TRACE DOSSIER (Section 63 BSA / 65B IEA)", self.styles['Heading1']))
+        elements.append(Paragraph("FORENSIC TRACE DOSSIER (Section 63 BSA / 65B IEA)", self.styles['Heading1']))
         elements.append(Spacer(1, 12))
         
         # Metadata

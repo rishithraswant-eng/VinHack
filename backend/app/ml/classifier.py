@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, Any, List
+from typing import Any
+
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -8,7 +9,7 @@ class NodeClassification(BaseModel):
     label: str
     confidence: float
     model_version: str
-    feature_vector: List[float]
+    feature_vector: list[float]
 
 class AuditLogger:
     @staticmethod
@@ -30,7 +31,7 @@ class GraphClassifier:
     def __init__(self, model_version: str = "ensemble_v1.0"):
         self.model_version = model_version
         
-    def classify_node(self, address: str, chain: str, graph_context: Dict[str, Any]) -> NodeClassification:
+    def classify_node(self, address: str, chain: str, graph_context: dict[str, Any]) -> NodeClassification:
         """
         Inference interface for classifying a node in the graph context.
         """

@@ -1,5 +1,5 @@
-import pytest
 from app.ml.graph_dataset import EllipticDatasetLoader
+
 
 def test_elliptic_loader_temporal_split():
     # Using mock loader

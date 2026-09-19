@@ -1,14 +1,29 @@
 
 import enum
+
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, 
-    Text, SmallInteger, BigInteger, LargeBinary, CheckConstraint, 
-    UniqueConstraint, Index, func, Float, Date, ARRAY
+    ARRAY,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
 )
-from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 
 from app.models.base import Base
+
 
 # ==========================================
 # ENUMS
@@ -166,7 +181,8 @@ class Organization(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('id <> parent_id', name='ck_org_no_self_parent'),
     )
 
@@ -189,7 +205,8 @@ class User(Base):
     failed_login_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('external_subject_id IS NOT NULL OR password_hash IS NOT NULL', name='ck_users_auth_present'),
     )
 
@@ -270,7 +287,8 @@ class Case(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint(
             """status = 'DRAFT' OR fir_number IS NOT NULL OR ncrp_acknowledgement IS NOT NULL OR written_authority_ref IS NOT NULL""",
             name='ck_case_authority_present'
@@ -290,7 +308,8 @@ class CaseAccessGrant(Base):
     granted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True))
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('expires_at > granted_at', name='ck_grant_window'),
         CheckConstraint('length(justification) >= 20', name='ck_grant_justified'),
     )
@@ -306,7 +325,8 @@ class CaseSeedAddress(Base):
     source_of_address = Column(Text, nullable=False)
     notes = Column(Text)
     added_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('case_id', 'address_id', name='ux_case_seed'),
     )
 
@@ -335,7 +355,8 @@ class CaseAttachment(Base):
     object_key = Column(Text, nullable=False)
     virus_scan_status = Column(Text, nullable=False, default='PENDING')
     uploaded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('size_bytes > 0', name='ck_attach_size'),
         CheckConstraint('octet_length(sha256) = 32', name='ck_attach_hash'),
     )
@@ -370,7 +391,8 @@ class ChainFinalityConfig(Base):
     effective_from = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     effective_to = Column(DateTime(timezone=True))
     set_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('min_confirmations >= 0', name='ck_finality_positive'),
         CheckConstraint('effective_to IS NULL OR effective_to > effective_from', name='ck_finality_window'),
     )
@@ -388,7 +410,8 @@ class Asset(Base):
     dust_threshold_base = Column(Numeric(78,0))
     is_verified = Column(Boolean, nullable=False, default=False)
     first_seen_at = Column(DateTime(timezone=True))
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('chain_id', 'contract_address_canon', name='ux_assets_chain_addr'),
         CheckConstraint('decimals BETWEEN 0 AND 36', name='ck_assets_decimals'),
     )
@@ -410,7 +433,8 @@ class Address(Base):
     is_high_degree = Column(Boolean, nullable=False, default=False)
     cache_refreshed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('chain_id', 'address_canonical', name='ux_addresses_chain_addr'),
     )
 
@@ -426,7 +450,8 @@ class ContractSignature(Base):
     added_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     added_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     is_active = Column(Boolean, nullable=False, default=True)
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('confidence_weight BETWEEN 0 AND 1', name='ck_sig_weight'),
     )
 
@@ -450,7 +475,8 @@ class Block(Base):
     orphaned_detected_at = Column(DateTime(timezone=True))
     ingest_run_id = Column(UUID(as_uuid=True), nullable=False)
     ingested_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         {'postgresql_partition_by': 'LIST (chain_id)'}
     )
 
@@ -483,7 +509,8 @@ class Transaction(Base):
     ingest_run_id = Column(UUID(as_uuid=True), nullable=False)
     ingested_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint(
             """(input_count IS NOT NULL) OR (from_address_id IS NOT NULL) OR is_coinbase""",
             name='ck_tx_model_fields'
@@ -521,7 +548,8 @@ class Transfer(Base):
     ingest_run_id = Column(UUID(as_uuid=True), nullable=False)
     ingested_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('value_base >= 0', name='ck_transfer_value_nonneg'),
         CheckConstraint('from_address_id IS NOT NULL OR to_address_id IS NOT NULL', name='ck_transfer_endpoints'),
         CheckConstraint('(is_pruned = FALSE) OR (prune_reason IS NOT NULL)', name='ck_prune_reason'),
@@ -576,7 +604,8 @@ class ProviderHealth(Base):
     p50_latency_ms = Column(Integer)
     p95_latency_ms = Column(Integer)
     health_score = Column(Numeric(4,3))
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('provider_id', 'window_start', name='ux_provider_health_window'),
     )
 
@@ -595,7 +624,8 @@ class TransactionSource(Base):
     agrees_with_consensus = Column(Boolean)
     disagreement_fields = Column(ARRAY(Text))
     ingest_run_id = Column(UUID(as_uuid=True), nullable=False)
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('chain_id', 'tx_hash', 'provider_id', 'fetched_at', name='ux_tx_source'),
     )
 
@@ -645,7 +675,8 @@ class TemporalProfile(Base):
     
     computed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     parameters_json = Column(JSONB, nullable=False)
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('branching_ratio IS NULL OR branching_ratio >= 0', name='ck_branching'),
     )
 
@@ -659,7 +690,8 @@ class TemporalBurst(Base):
     peak_intensity = Column(Float)
     total_value_base = Column(Numeric(78,0))
     pattern = Column(String, nullable=False) # Enum TemporalPattern
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('burst_end_at >= burst_start_at', name='ck_burst_window'),
     )
 
@@ -702,7 +734,8 @@ class AddressClassification(Base):
     superseded_by_id = Column(UUID(as_uuid=True), ForeignKey('address_classifications.id'))
     computed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('max_probability BETWEEN 0 AND 1', name='ck_cls_prob'),
         CheckConstraint("""(is_abstained = FALSE) OR (predicted_class = 'UNKNOWN')""", name='ck_cls_abstain'),
         CheckConstraint(
@@ -770,7 +803,8 @@ class Trace(Base):
     parent_trace_id = Column(UUID(as_uuid=True), ForeignKey('traces.id'))
     rerun_reason = Column(Text)
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('max_depth BETWEEN 1 AND 30', name='ck_trace_depth'),
         CheckConstraint('top_k_paths BETWEEN 1 AND 10', name='ck_trace_topk'),
     )
@@ -788,7 +822,8 @@ class TraceStage(Base):
     items_processed = Column(Integer)
     metrics = Column(JSONB, nullable=False, server_default='{}')
     error_detail = Column(JSONB)
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('trace_id', 'stage_name', name='ux_trace_stage'),
     )
 
@@ -820,7 +855,8 @@ class TracePath(Base):
     
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('trace_id', 'rank', name='ux_trace_path_rank'),
         CheckConstraint('hop_count > 0', name='ck_path_hops'),
     )
@@ -856,7 +892,8 @@ class TracePathHop(Base):
     counterpart_chain_id = Column(SmallInteger)
     
     hop_note = Column(Text)
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('trace_path_id', 'hop_index', name='ux_trace_path_hop'),
     )
 
@@ -888,7 +925,8 @@ class ConfidenceScore(Base):
     
     computed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('trace_path_id', name='ux_conf_path'),
         CheckConstraint('point_estimate BETWEEN 0 AND 1', name='ck_conf_range'),
         CheckConstraint('ci_lower <= point_estimate AND point_estimate <= ci_upper', name='ck_conf_ci'),
@@ -917,7 +955,8 @@ class ObfuscationCorrelation(Base):
     anonymity_set_estimate = Column(Integer)
     is_actionable = Column(Boolean, nullable=False, default=False)
     computed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('correlation_score BETWEEN 0 AND 1', name='ck_corr_score'),
     )
 
@@ -952,7 +991,8 @@ class MerkleProof(Base):
     fetched_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('chain_id', 'tx_hash', 'proof_kind', name='ux_merkle_tx_proof'),
         CheckConstraint('proof_depth >= 0', name='ck_proof_depth'),
         CheckConstraint(
@@ -982,7 +1022,8 @@ class EvidenceItem(Base):
     collection_method = Column(Text, nullable=False)
     sealed_at = Column(DateTime(timezone=True))
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('octet_length(content_digest) = 32', name='ck_evidence_digest'),
     )
 
@@ -1031,7 +1072,8 @@ class VaspRegistration(Base):
     source_verified_on = Column(Date, nullable=False)
     recorded_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('valid_to IS NULL OR valid_to > valid_from', name='ck_vasp_valid_window'),
     )
 
@@ -1067,7 +1109,8 @@ class VaspAddress(Base):
     valid_to = Column(Date)
     recorded_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     recorded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('address_id', 'vasp_entity_id', 'valid_from', name='ux_vasp_address'),
         CheckConstraint('attribution_confidence BETWEEN 0 AND 1', name='ck_vaspaddr_conf'),
     )
@@ -1086,7 +1129,8 @@ class BridgeIndex(Base):
     source_reference = Column(Text, nullable=False)
     recorded_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     recorded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('source_chain_id', 'source_address_id', 'dest_chain_id', 'dest_address_id', name='ux_bridge_index'),
     )
 
@@ -1133,7 +1177,8 @@ class Dossier(Base):
     generated_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     generated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('octet_length(pdf_sha256) = 32', name='ck_dossier_hash'),
         CheckConstraint('(supersedes_dossier_id IS NULL) = (supersede_reason IS NULL)', name='ck_dossier_supersede'),
     )
@@ -1196,7 +1241,8 @@ class DisclosureRequest(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('time_window_end > time_window_start', name='ck_disc_window'),
         CheckConstraint('array_length(target_tx_hashes, 1) >= 1', name='ck_disc_targets'),
         CheckConstraint(
@@ -1216,7 +1262,8 @@ class DisclosureRequestField(Base):
     edited_by = Column(UUID(as_uuid=True), ForeignKey('users.id'))
     edited_at = Column(DateTime(timezone=True))
     provenance = Column(JSONB, nullable=False)
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('disclosure_request_id', 'field_key', name='ux_disc_req_field'),
     )
 
@@ -1281,7 +1328,8 @@ class ModelVersion(Base):
     trained_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         UniqueConstraint('family_id', 'semver', name='ux_model_family_semver'),
         CheckConstraint("""split_strategy = 'TEMPORAL'""", name='ck_model_split'),
         CheckConstraint(
@@ -1329,7 +1377,8 @@ class ModelPromotion(Base):
     shadow_window_start = Column(DateTime(timezone=True))
     shadow_window_end = Column(DateTime(timezone=True))
     promoted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('proposed_by <> approved_by', name='ck_promo_two_person'),
     )
 
@@ -1372,7 +1421,8 @@ class AuditLog(Base):
     prev_entry_hash = Column(LargeBinary)
     entry_hash = Column(LargeBinary, nullable=False)
     
-    __table_args__ = (
+    from typing import ClassVar
+    __table_args__: ClassVar = (
         CheckConstraint('octet_length(entry_hash) = 32', name='ck_audit_hash_len'),
     )
 

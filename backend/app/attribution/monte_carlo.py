@@ -1,6 +1,8 @@
 import random
-from app.core.config import settings
+
 from app.attribution.models import ConfidenceResult
+from app.core.config import settings
+
 
 class MonteCarloScorer:
     def __init__(self, num_walks: int = settings.RWR_WALKS, threshold: float = settings.CONFIDENCE_THRESHOLD):

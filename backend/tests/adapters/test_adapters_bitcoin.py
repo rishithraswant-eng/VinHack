@@ -1,5 +1,7 @@
 import pytest
+
 from app.adapters.bitcoin import BitcoinAdapter
+
 
 def test_bitcoin_detect_address():
     adapter = BitcoinAdapter()

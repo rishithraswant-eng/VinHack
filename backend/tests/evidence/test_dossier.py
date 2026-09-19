@@ -1,10 +1,12 @@
-import pytest
 import os
 import shutil
+
 from pypdf import PdfReader
+
+from app.attribution.models import ConfidenceResult, TraceResult
 from app.evidence.dossier import DossierGenerator
 from app.evidence.sealer import SealedEvidence
-from app.attribution.models import TraceResult, ConfidenceResult
+
 
 def test_dossier_pdf_limitations_footer():
     output_dir = "tests/test_dossiers"

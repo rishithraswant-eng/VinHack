@@ -1,7 +1,7 @@
-import pytest
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from app.core.security import require_role, create_access_token
+
+from app.core.security import create_access_token, require_role
 
 app = FastAPI()
 

@@ -1,6 +1,6 @@
-import pytest
 from app.ingestion.finality import FinalityGate
 from app.models.canonical import ValidationStatus
+
 
 def test_finality_gate():
     config = {

@@ -1,10 +1,12 @@
-import sys
 import os
-import logging
+import sys
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sqlalchemy import create_engine, text
+
 from app.core.config import settings
+
 
 def seed_demo_data():
     # Use standard sync driver for quick insert
@@ -21,7 +23,9 @@ def seed_demo_data():
             try:
                 conn.execute(text(stmt))
             except Exception as e:
-                logging.warning(f"Ignoring duplicate or schema insert error: {e}")
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Ignoring duplicate or schema insert error: {e}")
                 
     print("Demo fixture data seeded successfully.")
 

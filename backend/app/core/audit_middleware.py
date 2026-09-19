@@ -1,10 +1,11 @@
+import logging
 import time
 import uuid
-import logging
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+
 from app.core.security import verify_access_token
-import jwt
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +29,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 payload = verify_access_token(token)
                 user_id = payload.get("sub", "unknown")
                 role = payload.get("role", "UNKNOWN")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.debug(f"Token error: {e}")
                 
         # Try to extract case_id from path parameters or body
         case_id = None

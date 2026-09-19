@@ -1,8 +1,10 @@
 import hashlib
 import json
-from typing import Dict, Any, List, Tuple, Optional
-from app.models.canonical import ValidationStatus
+from typing import Any
+
 from app.core.ratelimit import AsyncTokenBucket, with_exponential_backoff
+from app.models.canonical import ValidationStatus
+
 
 class CrossValidator:
     def __init__(self, token_bucket: AsyncTokenBucket = None):
@@ -31,12 +33,12 @@ class CrossValidator:
         return hashlib.sha256(encoded).digest()
 
     @with_exponential_backoff(max_retries=3)
-    async def fetch_from_provider(self, provider_mock_func, *args, **kwargs) -> Dict[str, Any]:
+    async def fetch_from_provider(self, provider_mock_func, *args, **kwargs) -> dict[str, Any]:
         """Wrapper to fetch data with rate limiting and backoff."""
         await self.bucket.consume(1.0)
         return await provider_mock_func(*args, **kwargs)
 
-    def validate_responses(self, responses: List[Dict[str, Any]]) -> Tuple[ValidationStatus, Optional[Dict[str, Any]]]:
+    def validate_responses(self, responses: list[dict[str, Any]]) -> tuple[ValidationStatus, dict[str, Any] | None]:
         if not responses:
             return ValidationStatus.UNVERIFIED, None
         

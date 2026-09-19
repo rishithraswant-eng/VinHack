@@ -1,7 +1,9 @@
-import pytest
-import pyotp
 import time
+
+import pyotp
+
 from app.core.security import verify_mfa_token
+
 
 def test_valid_totp_passes():
     secret = pyotp.random_base32()

@@ -1,11 +1,13 @@
 import os
+
 import torch
 from torch_geometric.data import HeteroData
-import numpy as np
+
 from app.core.config import settings
 
+
 class EllipticDatasetLoader:
-    def __init__(self, dataset_path: str = None):
+    def __init__(self, dataset_path: str | None = None):
         self.dataset_path = dataset_path if dataset_path is not None else settings.ELLIPTIC_DATASET_PATH
         
     def load(self) -> HeteroData:
@@ -42,7 +44,7 @@ class EllipticDatasetLoader:
         
         # Labels: 1=illicit, 2=licit, 3=unknown (encoded as 0, 1, 2 or similar for training)
         # Raw classes: 1, 2, 3, 2, 1
-        raw_labels = [1, 2, 3, 2, 1]
+        # raw_labels = [1, 2, 3, 2, 1]
         
         # Map labels to 0-indexed for training (e.g., 0=illicit, 1=licit, 2=unknown/ignored)
         y = torch.tensor([0, 1, 2, 1, 0], dtype=torch.long)

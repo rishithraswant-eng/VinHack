@@ -1,8 +1,7 @@
 import torch
-import torch.nn as nn
-from torch_geometric.nn.models.tgn import TGNMemory
-from torch_geometric.nn.models.tgn import LastNeighborLoader
+from torch import nn
 from torch_geometric.nn import TransformerConv
+from torch_geometric.nn.models.tgn import TGNMemory
 
 # Note: TGN requires streaming temporal data (temporal batches). 
 # The small static fixture graph used during mock evaluation is too small 
@@ -48,7 +47,7 @@ class TemporalGraphNetwork(nn.Module):
         # 1. Update memory based on past events (handled prior to this in training loop usually)
         
         # 2. Get current memory state
-        z, last_update = self.memory(n_id)
+        z, _last_update = self.memory(n_id)
         
         # This is a highly simplified stub because full TGN requires a complex batching 
         # and neighborhood sampling strategy (like TemporalDataLoader).

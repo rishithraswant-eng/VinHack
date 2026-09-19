@@ -1,10 +1,8 @@
 import os
-import torch
-import torch.nn.functional as F
-from app.ml.graph_dataset import EllipticDatasetLoader
-from app.ml.models.hgt import HeteroGraphTransformer
-from app.ml.models.rgcn import RelationalGCN
+
 from app.core.config import settings
+from app.ml.graph_dataset import EllipticDatasetLoader
+
 
 class MLTrainer:
     def __init__(self, use_minio: bool = False):
@@ -19,8 +17,8 @@ class MLTrainer:
         # Mocking training for the purpose of the engine
         # In a real scenario, this would have a full training loop over epochs
         print("Training HGT...")
-        y_true = self.dataset['tx'].y[self.dataset['tx'].test_mask].numpy()
-        y_pred = [0, 1] if len(y_true) >= 2 else [0]*len(y_true)
+        self.dataset['tx'].y[self.dataset['tx'].test_mask].numpy()
+        # y_pred
         
         metrics = {
             'f1': 0.8423,
@@ -32,8 +30,8 @@ class MLTrainer:
         
     def _train_rgcn(self) -> dict:
         print("Training R-GCN...")
-        y_true = self.dataset['tx'].y[self.dataset['tx'].test_mask].numpy()
-        y_pred = [1, 0] if len(y_true) >= 2 else [0]*len(y_true)
+        self.dataset['tx'].y[self.dataset['tx'].test_mask].numpy()
+        # y_pred
             
         metrics = {
             'f1': 0.8123,
@@ -79,7 +77,6 @@ class MLTrainer:
             print("Connecting to MinIO to save artifacts...")
             # Real MinIO logic would go here
             # e.g., s3_client.put_object(Bucket=settings.MINIO_BUCKET_MODELS, Key=artifact_name, Body=dummy_data)
-            pass
         else:
             print("MinIO fallback: Saving artifacts to local filesystem.")
             os.makedirs("./model_registry", exist_ok=True)

@@ -1,5 +1,7 @@
 import pytest
+
 from app.adapters.ethereum import EthereumAdapter
+
 
 def test_ethereum_detect_address():
     adapter = EthereumAdapter()

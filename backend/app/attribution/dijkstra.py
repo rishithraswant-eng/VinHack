@@ -1,14 +1,15 @@
-import math
 import heapq
-from typing import Dict, List, Set, Tuple
+import math
 from collections import defaultdict
+
 from app.core.config import settings
+
 
 class DijkstraDecayEngine:
     def __init__(self, decay_lambda: float = settings.DECAY_LAMBDA):
         self.decay_lambda = decay_lambda
 
-    def compute_trace(self, seed_wallet: str, graph_edges_temporal: List[Tuple[str, str, float]], vasp_nodes: Set[str]) -> tuple:
+    def compute_trace(self, seed_wallet: str, graph_edges_temporal: list[tuple[str, str, float]], vasp_nodes: set[str]) -> tuple:
         """
         Dijkstra with exponential decay weights.
         graph_edges_temporal: (from_node, to_node, timestamp)

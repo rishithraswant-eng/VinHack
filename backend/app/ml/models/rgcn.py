@@ -1,7 +1,8 @@
+
 import torch
-import torch.nn as nn
-from typing import Tuple
-from torch_geometric.nn import RGCNConv, Linear
+from torch import nn
+from torch_geometric.nn import Linear, RGCNConv
+
 
 class RelationalGCN(nn.Module):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, num_relations: int, num_layers: int):
@@ -25,7 +26,7 @@ class RelationalGCN(nn.Module):
         # Classifier
         self.classifier = Linear(hidden_channels, out_channels)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         x: node features [num_nodes, in_channels]
         edge_index: [2, num_edges]

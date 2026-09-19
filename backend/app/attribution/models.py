@@ -1,5 +1,6 @@
-from typing import List, Optional
+
 from pydantic import BaseModel
+
 
 class ConfidenceResult(BaseModel):
     score: float
@@ -8,8 +9,8 @@ class ConfidenceResult(BaseModel):
     requires_review: bool
 
 class TraceResult(BaseModel):
-    path: List[str]
-    vasp_node: Optional[str]
+    path: list[str]
+    vasp_node: str | None
     hop_count: int
     algorithm_used: str
     classifier_version: str

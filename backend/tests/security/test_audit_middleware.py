@@ -1,7 +1,8 @@
-import pytest
 import logging
-from fastapi import FastAPI, Request
+
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from app.core.audit_middleware import AuditMiddleware
 
 app = FastAPI()

@@ -1,12 +1,13 @@
 import hashlib
 import json
-from typing import List, Dict, Any
+
 from pydantic import BaseModel
+
 
 class MerkleProof(BaseModel):
     tx_hash: str
-    sibling_hashes: List[str]
-    is_left_node: List[bool]
+    sibling_hashes: list[str]
+    is_left_node: list[bool]
     merkle_root: str
 
     def to_json(self) -> str:
@@ -18,7 +19,7 @@ class MerkleEngine:
         return hashlib.sha256(data.encode('utf-8')).hexdigest()
 
     @classmethod
-    def build_proof(cls, tx_hash: str, block_txs: List[str]) -> MerkleProof:
+    def build_proof(cls, tx_hash: str, block_txs: list[str]) -> MerkleProof:
         """
         Constructs O(log N) sibling-hash path.
         """
@@ -81,7 +82,7 @@ class MerkleEngine:
         return current_hash == proof.merkle_root
 
 # Expose at module level for smoke testing
-def build_proof(tx_hash: str, block_txs: List[str]) -> MerkleProof:
+def build_proof(tx_hash: str, block_txs: list[str]) -> MerkleProof:
     return MerkleEngine.build_proof(tx_hash, block_txs)
 
 def verify_proof(proof: MerkleProof) -> bool:

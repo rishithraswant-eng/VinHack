@@ -1,6 +1,7 @@
-import pytest
 import logging
+
 from app.ml.classifier import GraphClassifier, NodeClassification
+
 
 def test_classifier_schema_and_audit(caplog):
     classifier = GraphClassifier(model_version="test_v1.0")

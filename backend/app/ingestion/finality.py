@@ -1,8 +1,9 @@
+
 from app.models.canonical import ValidationStatus
-from typing import Dict
+
 
 class FinalityGate:
-    def __init__(self, chain_finality_config: Dict[int, int]):
+    def __init__(self, chain_finality_config: dict[int, int]):
         """
         chain_finality_config: Mapping from chain_id to required confirmation depth.
         """

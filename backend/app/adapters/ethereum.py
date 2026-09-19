@@ -1,12 +1,13 @@
-import os
 import logging
-import httpx
-from typing import Dict, Any, List, Optional
 from decimal import Decimal
+from typing import Any
+
+import httpx
 from eth_utils import is_address, to_checksum_address
+
 from app.adapters.base import ChainAdapter
-from app.core.ratelimit import AsyncTokenBucket
 from app.core.config import settings
+from app.core.ratelimit import AsyncTokenBucket
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class EthereumAdapter(ChainAdapter):
         # EIP-55 checksum format is the canonical representation
         return to_checksum_address(raw_address)
         
-    async def fetch_address_activity(self, address: str, start_time: Optional[float] = None, end_time: Optional[float] = None) -> List[Dict[str, Any]]:
+    async def fetch_address_activity(self, address: str, start_time: float | None = None, end_time: float | None = None) -> list[dict[str, Any]]:
         api_key = settings.ETHERSCAN_API_KEY or "YourApiKeyToken"
         if api_key == "YourApiKeyToken":
             logger.info("ETHERSCAN_API_KEY not set - using default key (may be rate limited or deprecated)")
@@ -68,23 +69,23 @@ class EthereumAdapter(ChainAdapter):
             
         return canonical_txs
         
-    async def fetch_transaction(self, tx_hash: str) -> Dict[str, Any]:
+    async def fetch_transaction(self, tx_hash: str) -> dict[str, Any]:
         # Mock implementation
         return {}
         
-    async def fetch_block_header(self, block_number: int) -> Dict[str, Any]:
+    async def fetch_block_header(self, block_number: int) -> dict[str, Any]:
         # Mock implementation
         return {}
         
     async def get_finality_depth(self) -> int:
         return 64 # ~12 minutes on ETH PoS (roughly 2 epochs)
         
-    async def build_inclusion_proof(self, tx_hash: str, block_number: int) -> Dict[str, Any]:
+    async def build_inclusion_proof(self, tx_hash: str, block_number: int) -> dict[str, Any]:
         # Mock implementation
         return {"proof_kind": "ETH_MPT_TRANSACTION"}
         
     # Ethereum-specific methods
-    def decode_transfer_events(self, receipt_logs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def decode_transfer_events(self, receipt_logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Decodes ERC-20 Transfer events from transaction receipt logs.
         Transfer topic: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
@@ -125,7 +126,7 @@ class EthereumAdapter(ChainAdapter):
                 })
         return transfers
         
-    def analyze_transaction(self, tx: Dict[str, Any]) -> Dict[str, Any]:
+    def analyze_transaction(self, tx: dict[str, Any]) -> dict[str, Any]:
         """
         Analyzes a transaction for nonce sequencing and contract creation.
         """

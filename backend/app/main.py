@@ -6,9 +6,9 @@ Entry point for the FastAPI application server.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routers import cases, trace
 from app.core.config import settings
 from app.core.logging import CorrelationIdMiddleware, setup_logging
-from app.api.routers import trace, cases
 
 # Initialize structured logging
 setup_logging(log_level=settings.LOG_LEVEL, service_name="phantasm-api")

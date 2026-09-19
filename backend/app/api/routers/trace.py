@@ -1,15 +1,16 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel
 import asyncio
 import uuid
-from typing import Optional, Any
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from pydantic import BaseModel
+
 from app.adapters.ethereum import EthereumAdapter
-from app.attribution.models import TraceResult
 from app.attribution.path_engine import AttributionOrchestrator
-from app.evidence.merkle import MerkleEngine, MerkleProof
-from app.evidence.sealer import EvidenceSealer
 from app.evidence.dossier import DossierGenerator
-from app.sahyog.connector import MockSahyogConnector, DispatchResult
+from app.evidence.merkle import MerkleEngine
+from app.evidence.sealer import EvidenceSealer
+from app.sahyog.connector import MockSahyogConnector
 
 router = APIRouter()
 
@@ -20,10 +21,10 @@ class TraceRequest(BaseModel):
 class TraceResponse(BaseModel):
     trace_id: str
     status: str
-    vasp_node: Optional[str] = None
-    confidence: Optional[float] = None
-    dossier_url: Optional[str] = None
-    dispatch_result: Optional[Any] = None
+    vasp_node: str | None = None
+    confidence: float | None = None
+    dossier_url: str | None = None
+    dispatch_result: Any | None = None
 
 ACTIVE_TRACES = {}
 
@@ -168,7 +169,9 @@ async def get_trace_status(trace_id: str):
     return TraceResponse(**ACTIVE_TRACES[trace_id])
 
 import os
+
 from fastapi.responses import FileResponse
+
 
 @router.get("/cases/{case_id}/dossier")
 def get_dossier(case_id: str):

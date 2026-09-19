@@ -1,22 +1,21 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import jwt
 import pyotp
-from typing import List, Optional
-from fastapi import Request, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.core.config import settings
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 SECURITY_ALGORITHM = "HS256"
 JWT_SECRET = "super_secret_phantasm_key_for_testing"
 
 security_scheme = HTTPBearer(auto_error=False)
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expire = datetime.now(UTC) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=SECURITY_ALGORITHM)
     return encoded_jwt
@@ -30,14 +29,14 @@ def verify_access_token(token: str):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):  # noqa: B008
     if not credentials:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = verify_access_token(credentials.credentials)
     return payload
 
 def require_role(*roles: str):
-    def role_checker(user: dict = Depends(get_current_user)):
+    def role_checker(user: dict = Depends(get_current_user)):  # noqa: B008
         user_role = user.get("role")
         if user_role not in roles:
             raise HTTPException(status_code=403, detail="Insufficient privileges")

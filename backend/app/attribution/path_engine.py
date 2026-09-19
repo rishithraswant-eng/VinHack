@@ -1,10 +1,11 @@
-from typing import List, Set, Tuple
-from app.attribution.models import TraceResult
-from app.attribution.ppr import PPREngine
 from app.attribution.dijkstra import DijkstraDecayEngine
+from app.attribution.models import TraceResult
 from app.attribution.monte_carlo import MonteCarloScorer
+from app.attribution.ppr import PPREngine
+
 # Import classifier interface (mocked or actual)
 from app.ml.classifier import GraphClassifier
+
 
 class AttributionOrchestrator:
     def __init__(self):
@@ -13,13 +14,13 @@ class AttributionOrchestrator:
         self.dijkstra = DijkstraDecayEngine()
         self.scorer = MonteCarloScorer()
 
-    def trace(self, seed_wallet: str, graph_edges: List[tuple], vasp_nodes: Set[str], node_degrees: dict, use_dijkstra: bool = False) -> TraceResult:
+    def trace(self, seed_wallet: str, graph_edges: list[tuple], vasp_nodes: set[str], node_degrees: dict, use_dijkstra: bool = False) -> TraceResult:
         """
         Enforces classify-first, search-second.
         """
         # Step 1: Classify (Phase 2 constraint)
         # Mocking classification call to enforce order
-        classification = self.classifier.classify_node(seed_wallet, "bitcoin", {})
+        self.classifier.classify_node(seed_wallet, "bitcoin", {})
         
         # Step 2: Search (Phase 3)
         if use_dijkstra:

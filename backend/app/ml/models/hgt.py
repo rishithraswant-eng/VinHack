@@ -1,7 +1,8 @@
+
 import torch
-import torch.nn as nn
+from torch import nn
 from torch_geometric.nn import HGTConv, Linear
-from typing import Dict, List, Tuple
+
 
 class HeteroGraphTransformer(nn.Module):
     def __init__(
@@ -10,8 +11,8 @@ class HeteroGraphTransformer(nn.Module):
         out_channels: int, 
         num_heads: int, 
         num_layers: int,
-        node_types: List[str],
-        metadata: Tuple[List[str], List[Tuple[str, str, str]]]
+        node_types: list[str],
+        metadata: tuple[list[str], list[tuple[str, str, str]]]
     ):
         """
         Heterogeneous Graph Transformer (HGT) implementation per Hu et al. WWW 2020.
@@ -38,7 +39,7 @@ class HeteroGraphTransformer(nn.Module):
         # We output embedding + logits. The linear layer computes logits from embeddings.
         self.classifier = Linear(hidden_channels, out_channels)
 
-    def forward(self, x_dict: Dict[str, torch.Tensor], edge_index_dict: Dict[Tuple[str, str, str], torch.Tensor]) -> Dict[str, Tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, x_dict: dict[str, torch.Tensor], edge_index_dict: dict[tuple[str, str, str], torch.Tensor]) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
         """
         Forward pass.
         Returns a dict of node_type -> (embedding, logits)

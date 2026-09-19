@@ -1,12 +1,13 @@
-from typing import Dict, Any, List, Set
 from collections import defaultdict
+
 from app.core.config import settings
+
 
 class PPREngine:
     def __init__(self, high_degree_threshold: int = settings.HIGH_DEGREE_THRESHOLD):
         self.high_degree_threshold = high_degree_threshold
 
-    def compute_trace(self, seed_wallet: str, graph_edges: List[tuple], vasp_nodes: Set[str], node_degrees: Dict[str, int]) -> tuple:
+    def compute_trace(self, seed_wallet: str, graph_edges: list[tuple], vasp_nodes: set[str], node_degrees: dict[str, int]) -> tuple:
         """
         Bidirectional Personalised PageRank logic.
         seed_wallet: starting node ID

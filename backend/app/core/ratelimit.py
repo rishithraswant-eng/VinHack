@@ -1,7 +1,8 @@
 import asyncio
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Callable, Any
+
 
 class AsyncTokenBucket:
     def __init__(self, capacity: float, fill_rate: float):
@@ -42,10 +43,10 @@ def with_exponential_backoff(max_retries: int = 3, base_delay: float = 1.0, max_
             while True:
                 try:
                     return await func(*args, **kwargs)
-                except Exception as e:
+                except Exception:
                     retries += 1
                     if retries > max_retries:
-                        raise e
+                        raise
                     delay = min(max_delay, base_delay * (2 ** (retries - 1)))
                     await asyncio.sleep(delay)
         return wrapper

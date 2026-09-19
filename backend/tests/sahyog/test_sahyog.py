@@ -1,6 +1,8 @@
 import pytest
+
+from app.attribution.models import ConfidenceResult, TraceResult
 from app.sahyog.connector import MockSahyogConnector, SahyogConnector
-from app.attribution.models import TraceResult, ConfidenceResult
+
 
 def test_mock_sahyog_connector():
     connector = MockSahyogConnector()

@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import patch
+
 from app.attribution.path_engine import AttributionOrchestrator
+
 
 @patch("app.ml.classifier.GraphClassifier.classify_node")
 def test_path_engine_classify_first(mock_classify):
