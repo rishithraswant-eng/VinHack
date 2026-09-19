@@ -1,0 +1,1511 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  PHANTASM — DESIGN FLOW SPECIFICATION                                        ║
+║  Wireflows · State Machines · Decision Trees · Design Rationale · ADRs       ║
+║                                                                              ║
+║  Document ID    : PHANTASM-DSF-v1.0                                          ║
+║  Classification : RESTRICTED — LEA USE                                       ║
+║  Depends on     : PHANTASM-PRD-v1.0, PHANTASM-DBS-v1.0,                      ║
+║                   PHANTASM-UIX-v1.0, PHANTASM-TCF-v1.0                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+TABLE OF CONTENTS
+─────────────────────────────────────────────────────────────────────────────
+  0.  SCOPE — WHAT THIS DOCUMENT IS AND IS NOT
+  1.  DESIGN PROCESS & METHOD
+  2.  THE PROBLEM FRAME (double-diamond record)
+  3.  END-TO-END WIREFLOW — THE GOLDEN PATH
+  4.  WIREFLOW — HONEST FAILURE (MIXER TERMINATION)
+  5.  WIREFLOW — OFFSHORE TERMINUS / MLAT DIVERSION
+  6.  WIREFLOW — ANALYST OVERRIDE LOOP
+  7.  WIREFLOW — REORG INVALIDATION
+  8.  STATE MACHINE — CASE
+  9.  STATE MACHINE — TRACE
+ 10.  STATE MACHINE — DISCLOSURE REQUEST
+ 11.  STATE MACHINE — DOSSIER
+ 12.  STATE MACHINE — MODEL VERSION
+ 13.  DECISION TREE — CHAIN DETECTION & ADAPTER ROUTING
+ 14.  DECISION TREE — ABSORPTION DETERMINATION
+ 15.  DECISION TREE — SEARCH TERMINATION
+ 16.  DECISION TREE — JURISDICTION ROUTING
+ 17.  DECISION TREE — CONFIDENCE GATE & REVIEW ROUTING
+ 18.  DECISION TREE — EVIDENCE ADMISSIBILITY
+ 19.  CROSS-CUTTING FLOW — PERMISSION & AUTHORITY GATES
+ 20.  ERROR & DEGRADATION FLOWS
+ 21.  INTERACTION CHOREOGRAPHY (front-end ↔ back-end contract)
+ 22.  DESIGN RATIONALE — WHY EACH FLOW IS SHAPED THIS WAY
+ 23.  ARCHITECTURE DECISION RECORDS (ADR-001 … ADR-018)
+ 24.  REJECTED DESIGNS & WHY
+ 25.  FLOW-LEVEL TRACEABILITY MATRIX
+
+
+═════════════════════════════════════════════════════════════════════════════
+0.  SCOPE — WHAT THIS DOCUMENT IS AND IS NOT
+═════════════════════════════════════════════════════════════════════════════
+
+  THIS DOCUMENT IS:
+    - The connective tissue between the four other specifications.
+    - The authoritative source for every state machine in the system.
+    - The authoritative source for every branch condition that changes what
+      the user sees or what the system is permitted to do.
+    - The written record of WHY the flows are shaped as they are, so that a
+      future maintainer does not "simplify" a control that exists for legal
+      reasons.
+
+  THIS DOCUMENT IS NOT:
+    - A visual design specification. Colours, components, typography and
+      screen layouts live in PHANTASM-UIX-v1.0.
+    - A runtime/algorithm specification. Sequence diagrams at the service
+      level, pseudocode and failure semantics live in PHANTASM-TCF-v1.0.
+
+  THE DIVISION OF LABOUR, STATED ONCE:
+    UIX  = what a screen looks like and how a control behaves.
+    TCF  = what the services do and in what order.
+    DSF  = what state the system is in, which branch it takes, and why.
+
+  RULE OF PRECEDENCE: where this document and UIX describe the same
+  transition, DSF is authoritative for the CONDITION and UIX is
+  authoritative for the PRESENTATION.
+
+
+═════════════════════════════════════════════════════════════════════════════
+1.  DESIGN PROCESS & METHOD
+═════════════════════════════════════════════════════════════════════════════
+
+1.1  METHOD USED
+
+  ┌────────────────────────┬────────────────────────────────────────────────┐
+  │ Phase                  │ Output                                         │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ Problem framing        │ The one-sentence scope statement (PRD §1.2)     │
+  │ Persona grounding      │ 4 user personas + 2 adversarial personas        │
+  │ Journey mapping        │ 5 narrative journeys (PRD §5)                   │
+  │ Failure-first design   │ Journey B written BEFORE Journey A was refined  │
+  │ State modelling        │ 5 state machines (§8–§12 here)                  │
+  │ Branch enumeration     │ 6 decision trees (§13–§18 here)                 │
+  │ Rationale capture      │ 18 ADRs (§23 here)                              │
+  │ Adversarial review     │ Defence-counsel walkthrough of every artefact   │
+  └────────────────────────┴────────────────────────────────────────────────┘
+
+1.2  THE ONE METHODOLOGICAL CHOICE WORTH DEFENDING
+
+  FAILURE-FIRST DESIGN. The mixer-termination flow (§4) was designed before
+  the success flow was finalised. This inverts normal product practice and
+  was deliberate.
+
+  Reasoning: in a forensic product, the success path sells the demo but the
+  failure path determines whether the product survives contact with a court.
+  A system designed success-first tends to treat failure as an exception to
+  be handled; a system designed failure-first treats an honest "I could not
+  determine this" as a first-class, well-presented, legally useful output.
+
+  Consequence visible throughout: TERMINATED_AT_OBFUSCATOR is a normal
+  terminal state of the trace state machine (§9), not an error state. It
+  still produces a dossier. It still produces evidence. It simply does not
+  produce an addressee.
+
+1.3  DESIGN CONSTRAINTS INHERITED
+
+  From PRD  : G1 evidentiary defensibility over speed; P6 the human decides.
+  From DBS  : facts immutable, opinions versioned — so no flow may mutate a
+              sealed artefact; every "change" is a new version.
+  From UIX  : consequence-proportional friction — so flow length is
+              deliberately non-uniform.
+  From TCF  : determinism under replay — so every flow branch that affects
+              output must be recorded in the trace provenance.
+
+
+═════════════════════════════════════════════════════════════════════════════
+2.  THE PROBLEM FRAME (double-diamond record)
+═════════════════════════════════════════════════════════════════════════════
+
+  DISCOVER — what is actually broken
+    An IO holds a wallet address and a 24–72h dispersal window. Existing
+    tools produce a graph. A graph is not a legal instrument. The gap is not
+    "visualise the money"; the gap is "tell me whom to serve, and prove it".
+
+  DEFINE — the narrowest useful problem
+    → PRD §1.2: nearest custodial hop + the instrument to compel it.
+    Everything cut here (ownership clustering, identity attribution,
+    privacy coins, automated freezing) was cut because it widened the
+    problem without widening the legal outcome.
+
+  DEVELOP — three candidate shapes considered
+    (a) Exploration tool with export      → rejected, see §24.1
+    (b) Fully automated pipeline          → rejected, see §24.2
+    (c) Guided single-question workflow   → SELECTED
+    Shape (c) is why the case workspace has a NEXT STEP card (UIX §10)
+    rather than a toolbox of equal-weight actions.
+
+  DELIVER — the acceptance question
+    "Can an SI with no blockchain background, under time pressure, produce a
+     correctly-addressed legal request and a court-verifiable evidence
+     bundle — and be stopped by the system when the evidence does not
+     support it?"
+    Every flow below is evaluated against that sentence.
+
+
+═════════════════════════════════════════════════════════════════════════════
+3.  END-TO-END WIREFLOW — THE GOLDEN PATH
+═════════════════════════════════════════════════════════════════════════════
+
+  Legend:  [screen]   {system action}   ◆decision◆   ‖gate‖   ⇥audit event
+
+  ┌──────────────┐
+  │ [Login]      │ ⇥ AUTH_SUCCESS
+  └──────┬───────┘
+         ▼
+  ┌──────────────┐
+  │ [Dashboard]  │  TIME-CRITICAL section surfaces the case needing action
+  └──────┬───────┘
+         │ "New case"
+         ▼
+  ┌────────────────────┐
+  │ [Wizard step 1]    │  case details
+  │  details           │
+  └──────┬─────────────┘
+         ▼
+  ┌────────────────────┐
+  │ [Wizard step 2]    │  ‖LAWFUL AUTHORITY GATE‖
+  │  authority         │  at least one of FIR / NCRP ack / written authority
+  └──────┬─────────────┘  ⇥ AUTHORITY_RECORDED
+         ▼
+  ┌────────────────────┐
+  │ [Wizard step 3]    │  paste addresses
+  │  seed addresses    │──▶ {per-address validation}
+  └──────┬─────────────┘         │
+         │                       ▼
+         │                ◆chain detectable?◆ ── no ──▶ reject with the
+         │                       │                       specific failure
+         │                    ambiguous
+         │                       │
+         │                       ▼
+         │                [disambiguation choice ranked by activity]
+         │                       │ ⇥ CHAIN_RESOLVED_BY_USER
+         ▼◀──────────────────────┘
+  ┌────────────────────┐
+  │ [Case workspace]   │  NEXT STEP: "Launch a trace on the seed address"
+  └──────┬─────────────┘  ⇥ CASE_CREATED
+         ▼
+  ┌────────────────────┐
+  │ [Trace launch]     │  ‖case must not be DRAFT‖
+  │  Standard mode     │  defaults applied; advanced collapsed
+  └──────┬─────────────┘  ⇥ TRACE_LAUNCHED (params recorded)
+         ▼
+  ┌────────────────────────────────────────────────────────────┐
+  │ [Live progress]                                            │
+  │   INGEST → PRUNE → CLASSIFY → SEARCH → SCORE → SEAL        │
+  │   real per-stage counts; leaveable; resumable              │
+  └──────┬─────────────────────────────────────────────────────┘
+         ▼
+       ◆terminal state?◆
+         ├── COMPLETED ─────────────────────────────┐
+         ├── TERMINATED_AT_OBFUSCATOR ──▶ §4         │
+         ├── NO_PATH_FOUND ────────────▶ §20.3       │
+         └── BUDGET_EXCEEDED ──────────▶ §20.4       │
+                                                     ▼
+                                  ┌────────────────────────────┐
+                                  │ [Graph canvas / Paths]     │
+                                  │  primary path dominant     │
+                                  └──────┬─────────────────────┘
+                                         │ inspect nodes, hops, evidence
+                                         ▼
+                                  ┌────────────────────────────┐
+                                  │ [Confidence explainer]     │
+                                  └──────┬─────────────────────┘
+                                         ▼
+                                  ◆confidence ≥ action threshold?◆
+                                    │                        │
+                                   yes                       no
+                                    │                        ▼
+                                    │              ┌────────────────────┐
+                                    │              │ REVIEW_REQUIRED    │──▶ §6
+                                    │              └────────────────────┘
+                                    ▼
+                             ┌────────────────────────────┐
+                             │ [Evidence & proofs]        │
+                             │  ‖all cited hops final‖    │
+                             └──────┬─────────────────────┘
+                                    ▼
+                             ┌────────────────────────────┐
+                             │ [Dossier builder]          │
+                             │  starred sections locked   │
+                             └──────┬─────────────────────┘
+                                    │ ⇥ DOSSIER_GENERATED (hash recorded)
+                                    ▼
+                             ◆terminal VASP jurisdiction?◆ ──▶ §16
+                                    │ FIU_REGISTERED_DOMESTIC
+                                    ▼
+                             ┌────────────────────────────┐
+                             │ [Disclosure composer]      │
+                             │  ‖SCOPE CHECK‖             │
+                             │  IO cannot dispatch        │
+                             └──────┬─────────────────────┘
+                                    │ "Send for approval"
+                                    ▼ ⇥ APPROVAL_REQUESTED
+                             ┌────────────────────────────┐
+                             │ [Supervisor sign-off]      │
+                             │  WHAT COULD BE WRONG shown │
+                             └──────┬─────────────────────┘
+                                    ▼
+                             ‖RE-AUTHENTICATION + MFA‖
+                                    ▼
+                             ‖TIER-3 CONFIRM: type recipient name‖
+                                    ▼ ⇥ DOSSIER_SIGNED, REQUEST_DISPATCHED
+                             ┌────────────────────────────┐
+                             │ SUBMITTED → ACKNOWLEDGED   │
+                             │ SLA timer running          │
+                             └────────────────────────────┘
+
+  FLOW INVARIANTS ASSERTED BY THIS DIAGRAM
+    FI-1  No path reaches "dispatch" without passing the authority gate,
+          the finality gate, the confidence gate, the scope check, a
+          supervisory signature, and a typed confirmation. Six independent
+          controls, each removable only by a code change and a review.
+    FI-2  The IO role has no edge into the dispatch node at all. It is a
+          structural separation, not a permission flag.
+    FI-3  Every ⇥ marker is an append-only, hash-chained audit entry.
+
+
+═════════════════════════════════════════════════════════════════════════════
+4.  WIREFLOW — HONEST FAILURE (MIXER TERMINATION)
+═════════════════════════════════════════════════════════════════════════════
+
+  This is the flow the product is judged on.
+
+  {SEARCH stage} expanding hop 3
+         │
+         ▼
+  ◆next node classified MIXER with p ≥ absorption threshold?◆
+         │ yes
+         ▼
+  {DO NOT EXPAND. DO NOT FABRICATE A CONTINUATION.}
+         │
+         ▼
+  {record: obfuscator address, deposit tx, deposit time, denomination,
+           asset, anonymity-set estimate}
+         │
+         ▼
+  {run correlation module over withdrawal events in the correlation window}
+         │
+         ▼
+  ◆any candidate ≥ actionable correlation threshold?◆
+         │                                    │
+        no (expected case)                   yes (rare)
+         │                                    │
+         ▼                                    ▼
+  trace.status = TERMINATED_AT_OBFUSCATOR   present as CANDIDATE ONLY,
+  path.status  = no custodial terminus      never as an attributed path;
+         │                                  requires analyst acceptance
+         ▼                                    │
+  ┌──────────────────────────────────────────┴──────────────────────────┐
+  │ [Trace result — obfuscator screen]                                  │
+  │                                                                     │
+  │  Banner (legal variant, non-dismissible):                           │
+  │   "This trace terminated at a mixing service. PHANTASM does not      │
+  │    claim to trace funds through it."                                │
+  │                                                                     │
+  │  WHAT WAS ESTABLISHED                                               │
+  │   · funds from the seed address reached <mixer> at <time>           │
+  │   · <n> transactions, all with verified inclusion proofs            │
+  │   · this is itself evidence and is dossier-able                     │
+  │                                                                     │
+  │  WHAT WAS NOT ESTABLISHED                                           │
+  │   · where the funds went afterwards                                 │
+  │   · correlation candidates: 21%, 17%, 14% — all below the           │
+  │     actionable threshold, against an anonymity set of ~<N>          │
+  │                                                                     │
+  │  RECOMMENDED NEXT STEPS                                             │
+  │   · preservation order to the mixer front-end operator if the       │
+  │     operator is identifiable and within jurisdiction                │
+  │   · MLAT if the operator is offshore                                │
+  │   · re-run if new deposits from the seed are later observed         │
+  │                                                                     │
+  │  [ Generate dossier of what was established ]                       │
+  │  [ View correlation candidates ]  [ Return to case ]                │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  DESIGN RULES ENFORCED HERE
+    R4-1  The dossier is still offered. Proving that funds entered a mixer
+          is evidence of layering and is useful to a prosecutor.
+    R4-2  Correlation candidates are shown WITH the anonymity-set estimate.
+          A 21% correlation against a set of 3 and against a set of 5,000
+          are entirely different claims and must never render identically.
+    R4-3  No disclosure-request action is offered. There is no addressee.
+    R4-4  The word "failed" does not appear. The trace did not fail; it
+          reached a correct and honest terminal state.
+
+
+═════════════════════════════════════════════════════════════════════════════
+5.  WIREFLOW — OFFSHORE TERMINUS / MLAT DIVERSION
+═════════════════════════════════════════════════════════════════════════════
+
+  {path terminates at VASP entity}
+         │
+         ▼
+  {resolve entity against versioned registry AS AT the offence date}
+         │
+         ▼
+  ◆registry match?◆
+    │                    │                        │
+  FIU_REGISTERED     NOT_REGISTERED /        UNKNOWN_ENTITY
+  _DOMESTIC          OFFSHORE                     │
+    │                    │                        ▼
+    ▼                    ▼                 ┌────────────────────┐
+  SAHYOG route     ┌──────────────────┐    │ flag for I4C       │
+  enabled          │ SAHYOG dispatch  │    │ entity resolution  │
+  (§3 continues)   │ SUPPRESSED       │    │ no route offered   │
+                   │                  │    └────────────────────┘
+                   │ MLAT / Interpol  │
+                   │ packet offered   │
+                   │ + jurisdiction   │
+                   │   note           │
+                   │ + published LEA  │
+                   │   contact if any │
+                   │ + realistic      │
+                   │   timeline field │
+                   └──────────────────┘
+
+  WHY SUPPRESSION RATHER THAN A WARNING
+    A warning that can be clicked past will be clicked past under time
+    pressure. Serving a SAHYOG instrument on an entity outside its reach is
+    both futile and reputationally damaging to the requesting unit. The
+    action is therefore removed from the interface, not merely discouraged
+    (mirrors UIX §20's "absent beats disabled" rule).
+
+  BITEMPORAL SUBTLETY (from DBS §13)
+    Registration is evaluated at the OFFENCE date as well as today. An
+    exchange registered today but unregistered at the time of the offence
+    changes which instrument applies. The flow surfaces both facts rather
+    than silently using "now".
+
+
+═════════════════════════════════════════════════════════════════════════════
+6.  WIREFLOW — ANALYST OVERRIDE LOOP
+═════════════════════════════════════════════════════════════════════════════
+
+  [Review queue] sorted by review value (low confidence × high traced value)
+         │
+         ▼
+  ‖analyst must open the evidence tab before Accept enables‖
+         │
+         ▼
+  ◆analyst judgement◆
+    ├── ACCEPT ──▶ ⇥ ATTRIBUTION_ACCEPTED ──▶ case advances
+    │
+    ├── REJECT ──▶ requires written reason
+    │              ⇥ ATTRIBUTION_REJECTED
+    │              case returns to IO with the note attached
+    │
+    └── RECLASSIFY A NODE
+              │
+              ▼
+        [override form]
+         · new class (required)
+         · justification ≥ 20 chars (required, DB-enforced)
+         · impact preview: "re-scores 2 paths"
+         · explicit notice: "this override will be named in the dossier
+           with your rank and service ID"
+              │
+              ▼
+        {new versioned classification row; prior row NOT mutated}
+              │
+              ├──▶ {re-score affected paths}  (NOT a re-ingest)
+              │
+              └──▶ {queue as label candidate}
+                          │
+                          ▼
+                    ‖MODEL CURATOR GATE‖
+                          │
+                    ◆curator decision◆
+                      ├── APPROVE ──▶ enters next training dataset version
+                      └── REJECT  ──▶ retained as a record, never trained on
+
+  THE CURATOR GATE IS THE POINT
+    Without it, the model trains on its own corrected mistakes and silently
+    learns whichever analyst overrides most often. That is a closed feedback
+    loop producing confident, systematically wrong classifications — the
+    exact failure mode that would eventually surface in court as
+    "your system was trained on its own errors". PRD RSK-011.
+
+  WHAT AN OVERRIDE DOES NOT DO
+    - It does not delete or alter the machine's original opinion.
+    - It does not re-run ingestion.
+    - It does not silently improve a confidence score without disclosure.
+    - It does not remain invisible: the dossier prints it.
+
+
+═════════════════════════════════════════════════════════════════════════════
+7.  WIREFLOW — REORG INVALIDATION
+═════════════════════════════════════════════════════════════════════════════
+
+  {scheduled re-validation job}
+         │ for every dossier-cited transaction
+         ▼
+  {re-fetch block header at the cited height}
+         │
+         ▼
+  ◆block_hash matches the cited hash?◆
+    │                              │
+   yes                             no
+    │                              ▼
+  no action              {mark block is_orphaned}
+                         {mark transaction REORGED}
+                                   │
+                                   ▼
+                         ◆is the tx cited by a dossier?◆
+                            │                     │
+                           no                    yes
+                            │                     ▼
+                     flag on graph        {dossier → INVALIDATED}
+                     only                 {P1 alert on the case}
+                                          {case banner, non-dismissible}
+                                                  │
+                                                  ▼
+                                     ◆was a request already dispatched?◆
+                                        │                        │
+                                       no                       yes
+                                        │                        ▼
+                                 prompt re-trace        ‖ERRATUM PROCEDURE‖
+                                                        (PRD LR-013)
+                                                        · erratum notice
+                                                          generated for the
+                                                          served VASP
+                                                        · supervisor must
+                                                          review and sign it
+                                                        · original request
+                                                          status → ERRATUM_
+                                                          ISSUED
+                                                        · full audit trail
+
+  WHY THIS FLOW EXISTS AT ALL
+    Confirmation-depth gating makes a reorg affecting cited evidence very
+    unlikely. Very unlikely is not never, and the first time it happens the
+    product's credibility depends entirely on whether it detected and
+    disclosed it, or whether opposing counsel did.
+
+
+═════════════════════════════════════════════════════════════════════════════
+8.  STATE MACHINE — CASE
+═════════════════════════════════════════════════════════════════════════════
+
+                    ┌─────────┐
+        create ────▶│  DRAFT  │
+                    └────┬────┘
+        authority        │  ‖lawful authority recorded‖
+        recorded         ▼
+                    ┌─────────┐
+              ┌────▶│ ACTIVE  │◀────────────┐
+              │     └────┬────┘             │
+              │          │                  │ analyst rejects /
+              │   trace  │                  │ supervisor returns
+              │ completed│                  │
+              │          ▼                  │
+              │  ◆confidence ≥ threshold?◆  │
+              │      │            │         │
+              │     no           yes        │
+              │      ▼            │         │
+              │ ┌──────────────┐  │         │
+              │ │REVIEW_       │──┘ analyst │
+              │ │REQUIRED      │──accepts──▶│
+              │ └──────┬───────┘            │
+              │        │ analyst rejects    │
+              │        └────────────────────┘
+              │                   │
+              │                   ▼
+              │            ┌─────────────┐
+              │            │ ATTRIBUTED  │
+              │            └──────┬──────┘
+              │                   │ supervisor signs & dispatches
+              │                   ▼
+              │            ┌─────────────┐
+              │            │ DISPATCHED  │
+              │            └──────┬──────┘
+              │                   │ VASP responds
+              │                   ▼
+              │            ┌─────────────┐
+              │            │ RESPONDED   │
+              │            └──────┬──────┘
+              │                   │
+              │                   ▼
+              │            ┌─────────────┐      ┌──────────┐
+              └────────────│   CLOSED    │─────▶│ ARCHIVED │
+                  reopen   └─────────────┘      └──────────┘
+                                   ▲
+                                   │
+                            ┌─────────────┐
+                            │  SUSPENDED  │ (from any active state)
+                            └─────────────┘
+
+  TRANSITION TABLE
+  ┌──────────────┬──────────────────┬───────────────────────────────────────┐
+  │ From         │ To               │ Guard                                 │
+  ├──────────────┼──────────────────┼───────────────────────────────────────┤
+  │ DRAFT        │ ACTIVE           │ ≥1 authority ref recorded (DB CHECK)   │
+  │ ACTIVE       │ REVIEW_REQUIRED  │ trace complete AND conf < threshold    │
+  │ ACTIVE       │ ATTRIBUTED       │ trace complete AND conf ≥ threshold    │
+  │ REVIEW_REQ   │ ATTRIBUTED       │ analyst accept, reason recorded        │
+  │ REVIEW_REQ   │ ACTIVE           │ analyst reject, reason recorded        │
+  │ ATTRIBUTED   │ DISPATCHED       │ dossier sealed + scope check + signed  │
+  │ DISPATCHED   │ RESPONDED        │ VASP response recorded                 │
+  │ any active   │ SUSPENDED        │ supervisor action + reason             │
+  │ RESPONDED    │ CLOSED           │ closure reason recorded                │
+  │ CLOSED       │ ARCHIVED         │ retention job AND legal_hold = FALSE   │
+  │ CLOSED       │ ACTIVE           │ reopen, supervisor + reason            │
+  │ ARCHIVED     │ —                │ terminal; no transition out            │
+  └──────────────┴──────────────────┴───────────────────────────────────────┘
+
+  INVARIANTS
+    CS-1  DRAFT cannot launch a trace. Enforced at DB (ck_case_authority_
+          present) and at the API layer, deliberately in both places.
+    CS-2  A case under legal_hold never reaches ARCHIVED.
+    CS-3  Every transition writes a case_event AND an audit_log entry.
+    CS-4  No transition deletes an artefact. Closure is a status, never a
+          purge.
+
+
+═════════════════════════════════════════════════════════════════════════════
+9.  STATE MACHINE — TRACE
+═════════════════════════════════════════════════════════════════════════════
+
+   ┌────────┐
+   │ QUEUED │
+   └───┬────┘
+       ▼
+   ┌───────────┐   provider total failure    ┌────────┐
+   │ INGESTING │───────────────────────────▶ │ FAILED │
+   └───┬───────┘                             └────────┘
+       ▼                                          ▲
+   ┌─────────┐                                    │
+   │ PRUNING │  (skipped if pruning_enabled=false)│
+   └───┬─────┘                                    │
+       ▼                                          │
+   ┌──────────────┐                               │
+   │ CLASSIFYING  │───────────────────────────────┤
+   └───┬──────────┘                               │
+       ▼                                          │
+   ┌───────────┐                                  │
+   │ SEARCHING │──────────────────────────────────┤
+   └───┬───────┘                                  │
+       │                                          │
+       ├──▶ absorption reached ──┐                │
+       ├──▶ mixer reached ───────┼──▶ TERMINATED_AT_OBFUSCATOR  (terminal)
+       ├──▶ depth/value/time ────┼──▶ BUDGET_EXCEEDED           (terminal,
+       │    budget exhausted     │                               resumable)
+       └──▶ frontier empty ──────┼──▶ NO_PATH_FOUND             (terminal,
+                                 │                               resumable)
+                                 ▼
+                          ┌──────────┐
+                          │ SCORING  │
+                          └────┬─────┘
+                               ▼
+                          ┌──────────┐
+                          │ SEALING  │
+                          └────┬─────┘
+                               ▼
+                          ┌───────────┐
+                          │ COMPLETED │ (terminal)
+                          └───────────┘
+
+   CANCELLED reachable from any non-terminal state by user action; preserves
+   completed stages and the search frontier.
+
+  TERMINAL-STATE SEMANTICS — THE IMPORTANT TABLE
+  ┌────────────────────────────┬──────────┬─────────┬────────────────────────┐
+  │ Terminal state             │ Dossier? │ Request?│ Meaning to the officer │
+  ├────────────────────────────┼──────────┼─────────┼────────────────────────┤
+  │ COMPLETED                  │ yes      │ maybe¹  │ a custodial terminus   │
+  │                            │          │         │ was found and scored   │
+  │ TERMINATED_AT_OBFUSCATOR   │ yes      │ no      │ funds entered a mixer; │
+  │                            │          │         │ that fact is evidence  │
+  │ NO_PATH_FOUND              │ yes²     │ no      │ no custodial terminus  │
+  │                            │          │         │ within budget          │
+  │ BUDGET_EXCEEDED            │ yes²     │ no      │ search stopped early;  │
+  │                            │          │         │ resumable from frontier│
+  │ FAILED                     │ no       │ no      │ system fault; retry    │
+  │ CANCELLED                  │ no       │ no      │ user stopped it        │
+  └────────────────────────────┴──────────┴─────────┴────────────────────────┘
+   ¹ subject to the confidence gate and jurisdiction routing
+   ² a "what was established" dossier only, with no attribution claim
+
+  WHY FOUR DISTINCT NON-SUCCESS TERMINALS RATHER THAN ONE "FAILED"
+    Because they mean four different things to the investigator and imply
+    four different next actions. Collapsing them into "failed" would destroy
+    the information that makes the tool useful when it cannot answer the
+    question. This is the single clearest expression of the failure-first
+    method described in §1.2.
+
+  RESUMABILITY
+    BUDGET_EXCEEDED and NO_PATH_FOUND persist the search frontier
+    (DBS: phm:trace:{id}:frontier + trace_stages.metrics). "Continue from
+    frontier" creates a CHILD trace with parent_trace_id set, never mutates
+    the original. The original result remains reproducible forever.
+
+
+═════════════════════════════════════════════════════════════════════════════
+10.  STATE MACHINE — DISCLOSURE REQUEST
+═════════════════════════════════════════════════════════════════════════════
+
+   ┌───────┐  send for      ┌──────────────────┐
+   │ DRAFT │───approval────▶│ PENDING_APPROVAL │
+   └───┬───┘                └────┬────────┬────┘
+       │                         │        │ supervisor returns
+       │ withdraw                │        └──────────▶ back to DRAFT
+       ▼                         │ supervisor signs
+   ┌───────────┐                 ▼
+   │ WITHDRAWN │            ┌────────┐
+   └───────────┘            │ SIGNED │
+                            └───┬────┘
+                                │ connector dispatch (idempotency key)
+                                ▼
+                          ┌───────────┐   transport failure  ⟳ retry
+                          │ SUBMITTED │◀──────────────────────┘
+                          └─────┬─────┘
+                                │ VASP acknowledges
+                                ▼
+                        ┌──────────────┐
+                        │ ACKNOWLEDGED │   SLA timer running
+                        └──────┬───────┘
+                               │
+                    ┌──────────┼───────────┐
+                    ▼          ▼           ▼
+              ┌───────────┐ ┌──────────┐ ┌─────────────────┐
+              │ RESPONDED │ │ REJECTED │ │ ERRATUM_ISSUED  │
+              └─────┬─────┘ └────┬─────┘ └────────┬────────┘
+                    │            │                │
+                    └────────────┴────────────────┘
+                                 ▼
+                            ┌────────┐
+                            │ CLOSED │
+                            └────────┘
+
+  GUARDS
+  ┌────────────────────┬──────────────────────────────────────────────────┐
+  │ Transition         │ Guard                                            │
+  ├────────────────────┼──────────────────────────────────────────────────┤
+  │ DRAFT → PENDING    │ dossier exists AND scope_check_passed = TRUE      │
+  │ PENDING → SIGNED   │ approver ≠ creator AND MFA re-auth AND typed      │
+  │                    │ recipient-name confirmation                       │
+  │ SIGNED → SUBMITTED │ idempotency_key present; duplicate keys are a     │
+  │                    │ no-op, not a second legal service                 │
+  │ any → WITHDRAWN    │ only before SUBMITTED; after that an erratum is   │
+  │                    │ the only correction mechanism                     │
+  │ any → ERRATUM      │ triggered by reorg invalidation or LR-013         │
+  └────────────────────┴──────────────────────────────────────────────────┘
+
+  THE WITHDRAWAL ASYMMETRY, EXPLAINED
+    Before dispatch, a request is a draft and can vanish. After dispatch it
+    has been served on a third party who has begun acting on it. Pretending
+    it can be "unsent" would be a lie the interface tells the officer. Hence
+    ERRATUM_ISSUED exists as a distinct state, and the Tier-3 dialog says so
+    explicitly before the officer signs.
+
+
+═════════════════════════════════════════════════════════════════════════════
+11.  STATE MACHINE — DOSSIER
+═════════════════════════════════════════════════════════════════════════════
+
+   {generate} ──▶ ┌────────────┐
+                  │ GENERATED  │  immutable, content-addressed
+                  └─────┬──────┘
+                        │ certifying officer signs
+                        ▼
+                  ┌────────────┐
+                  │  CERTIFIED │
+                  └─────┬──────┘
+              ┌─────────┼──────────────┐
+              │         │              │
+        regenerate   reorg on a    used in a
+        (new reason) cited tx      disclosure request
+              │         │              │
+              ▼         ▼              ▼
+      ┌────────────┐ ┌─────────────┐  (no state change; linkage recorded)
+      │ SUPERSEDED │ │ INVALIDATED │
+      └────────────┘ └─────────────┘
+
+  RULES
+    D-1  No dossier is ever deleted, including a SUPERSEDED or INVALIDATED
+         one. Destroying a superseded evidentiary artefact is itself an
+         evidential problem.
+    D-2  A SUPERSEDED dossier remains downloadable, watermarked, with a link
+         to its successor.
+    D-3  An INVALIDATED dossier downloads with an invalidation stamp and the
+         reason on the cover page.
+    D-4  Version n+1 always records why n was superseded. "Regenerated" is
+         not an acceptable reason string; the UI requires substance.
+    D-5  Generation is blocked entirely if any cited hop is PENDING_FINALITY
+         or REORGED (DB trigger fn_check_dossier_finality).
+
+
+═════════════════════════════════════════════════════════════════════════════
+12.  STATE MACHINE — MODEL VERSION
+═════════════════════════════════════════════════════════════════════════════
+
+   ┌──────────┐   evaluation complete    ┌───────────┐
+   │ TRAINING │─────────────────────────▶│ CANDIDATE │
+   └──────────┘                          └─────┬─────┘
+                                               │ ‖model card required‖
+                                               ▼
+                                         ┌──────────┐
+                                         │  SHADOW  │ runs alongside ACTIVE;
+                                         └────┬─────┘ outputs recorded,
+                                              │       not surfaced
+                                              │ ‖two-person promotion‖
+                                              ▼
+                                         ┌──────────┐
+                    ┌───────kill switch──│  ACTIVE  │
+                    │                    └────┬─────┘
+                    ▼                         │ superseded by a newer ACTIVE
+              ┌──────────┐                    ▼
+              │ REVOKED  │              ┌────────────┐
+              └──────────┘              │ DEPRECATED │
+                                        └────────────┘
+
+  RULES
+    M-1  Exactly one ACTIVE per family (DB unique partial index).
+    M-2  CANDIDATE → SHADOW → ACTIVE requires: model card with failure modes
+         and prohibited uses, temporal-split evaluation, calibration report,
+         ablation table, and negative findings. All five, or no promotion.
+    M-3  Promotion requires two distinct people (proposer ≠ approver).
+    M-4  DEPRECATED and REVOKED artefacts are retained forever, because
+         completed traces pin them and must remain reproducible.
+    M-5  The kill switch (ACTIVE → REVOKED, reverting to the prior version)
+         is one click plus confirmation. It is reached under incident
+         pressure and must not be buried.
+    M-6  Promoting a model NEVER retroactively changes any completed trace,
+         classification row, or dossier.
+
+
+═════════════════════════════════════════════════════════════════════════════
+13.  DECISION TREE — CHAIN DETECTION & ADAPTER ROUTING
+═════════════════════════════════════════════════════════════════════════════
+
+  INPUT: raw address string from the user
+
+  ┌─ normalise: trim, strip whitespace, preserve original as address_raw
+  │
+  ├─ starts with "bc1" / "tb1" and valid Bech32/Bech32m checksum?
+  │     └─▶ BITCOIN · UTXO adapter                                  [decided]
+  │
+  ├─ Base58Check valid AND version byte ∈ {0x00, 0x05}?
+  │     └─▶ BITCOIN · UTXO adapter                                  [decided]
+  │
+  ├─ Base58Check valid, 34 chars, leading 'T', version byte 0x41?
+  │     └─▶ TRON · hybrid adapter                                   [decided]
+  │         NOTE: TRX native is UTXO-like in the account model sense used
+  │         here; TRC-20 uses account semantics. The adapter implements both
+  │         and the choice is recorded per transfer, not per address.
+  │
+  ├─ matches ^0x[0-9a-fA-F]{40}$ ?
+  │     │
+  │     ├─ EIP-55 mixed-case checksum present and invalid?
+  │     │     └─▶ REJECT: "checksum failure" (do not silently lowercase)
+  │     │
+  │     └─ probe activity on ETHEREUM, BNB, POLYGON in parallel
+  │           │
+  │           ├─ activity on exactly one chain ──▶ that chain      [decided]
+  │           ├─ activity on none ──▶ REJECT: "no activity on any
+  │           │                       supported EVM chain"
+  │           └─ activity on ≥2 ──▶ ‖USER DISAMBIGUATION‖
+  │                                 present all, ranked by tx count,
+  │                                 default highlighted but NOT preselected
+  │                                 ⇥ CHAIN_RESOLVED_BY_USER recorded in
+  │                                    trace provenance
+  │
+  ├─ Base58, decodes to exactly 32 bytes, valid Ed25519 point?
+  │     └─▶ SOLANA · account adapter                                [decided]
+  │
+  └─ otherwise
+        └─▶ REJECT with the full list of validations attempted and the
+            specific failure for each. Never "invalid address".
+
+  DESIGN RULE
+    The system never guesses silently. Where genuine ambiguity exists (the
+    0x case, which is the common case in practice), the human resolves it
+    and the resolution is recorded as a fact about the trace — because the
+    choice of chain determines the entire evidentiary output and a court is
+    entitled to know a human made it.
+
+
+═════════════════════════════════════════════════════════════════════════════
+14.  DECISION TREE — ABSORPTION DETERMINATION
+═════════════════════════════════════════════════════════════════════════════
+
+  Asked once per node, before the search is permitted to expand it.
+
+  ┌─ node in vasp_addresses with valid_to IS NULL
+  │  AND attribution_source = 'CASE_CONFIRMED'?
+  │     └─▶ ABSORPTION = TRUE, confidence source = REGISTRY_CONFIRMED
+  │         (highest-quality label the system can hold)
+  │
+  ├─ node in vasp_addresses, other attribution_source?
+  │     └─▶ ABSORPTION = TRUE, confidence weighted by
+  │         attribution_confidence; recorded as registry-derived
+  │
+  ├─ classification predicted_class ∈ {VASP_DEPOSIT, VASP_HOT, VASP_COLD}
+  │  AND max_probability ≥ absorption_probability_threshold (default 0.85)?
+  │     └─▶ ABSORPTION = TRUE, source = MODEL
+  │
+  ├─ classification = MIXER AND p ≥ threshold?
+  │     └─▶ ABSORPTION = TRUE, but kind = OBFUSCATOR
+  │         → routes to §4, NOT to attribution
+  │
+  ├─ classification = SANCTIONED?
+  │     └─▶ ABSORPTION = TRUE, kind = SANCTIONED
+  │         → separate reporting path; no ordinary disclosure request
+  │
+  ├─ is_high_degree = TRUE AND class = UNKNOWN?
+  │     └─▶ ‖FORCE CLASSIFICATION BEFORE EXPANDING‖
+  │         then re-enter this tree
+  │         (expanding an unclassified hub is the failure mode that kills
+  │          naive implementations — DBS Q4 exists for exactly this)
+  │
+  └─ otherwise
+        └─▶ ABSORPTION = FALSE; node is expandable
+
+  WHY REGISTRY BEATS MODEL
+    A VASP that responded to a prior disclosure request and confirmed an
+    address is ground truth. A model output is an estimate. Ordering the
+    tree registry-first means the system's best evidence is used first and
+    the model is a fallback, not the primary authority — which is also the
+    ordering easiest to defend when asked "how did you know that was an
+    exchange address?".
+
+
+═════════════════════════════════════════════════════════════════════════════
+15.  DECISION TREE — SEARCH TERMINATION
+═════════════════════════════════════════════════════════════════════════════
+
+  Evaluated at every expansion step. First match wins; the matched reason is
+  recorded on the trace and displayed to the user. There is no unlabelled
+  termination.
+
+  1. absorbing node reached (VASP)          → ABSORPTION        · COMPLETED
+  2. absorbing node reached (MIXER)         → OBFUSCATOR        · §4
+  3. absorbing node reached (SANCTIONED)    → SANCTIONED_ENTITY · special
+  4. hop_index ≥ max_depth                  → MAX_DEPTH         · BUDGET_EXC
+  5. traced value share < value_floor       → VALUE_FLOOR       · BUDGET_EXC
+  6. wall clock > time_budget_ms            → TIME_BUDGET       · BUDGET_EXC
+  7. nodes_expanded > node_budget           → NODE_BUDGET       · BUDGET_EXC
+  8. frontier empty                         → NO_TERMINUS       · NO_PATH
+  9. user cancelled                         → USER_CANCELLED    · CANCELLED
+
+  ORDERING RATIONALE
+    Absorption checks precede budget checks so that a trace which reaches
+    its answer on the last permitted hop returns COMPLETED rather than
+    BUDGET_EXCEEDED. Getting this order wrong would report success as
+    failure at exactly the boundary where it matters most.
+
+  EVERY BUDGET TERMINATION PRESERVES THE FRONTIER
+    so that "continue from frontier" is available without re-running the
+    completed stages (PRD FR-ATT-007).
+
+
+═════════════════════════════════════════════════════════════════════════════
+16.  DECISION TREE — JURISDICTION ROUTING
+═════════════════════════════════════════════════════════════════════════════
+
+  INPUT: terminal VASP entity + the offence date
+
+  ┌─ resolve vasp_registrations WHERE valid_from ≤ offence_date
+  │  AND (valid_to IS NULL OR valid_to > offence_date)
+  │  AND superseded_at IS NULL
+  │
+  ├─ registered with FIU_IND AND is_sahyog_onboarded = TRUE?
+  │     └─▶ ROUTE = SAHYOG
+  │         legal_basis default = SEC_94_BNSS_2023
+  │         dispatch action ENABLED (subject to all other gates)
+  │
+  ├─ registered with FIU_IND but NOT sahyog_onboarded?
+  │     └─▶ ROUTE = DIRECT_SERVICE
+  │         nodal officer channel from registry (email/portal/post)
+  │         SAHYOG dispatch suppressed; direct instrument offered
+  │
+  ├─ registered offshore with a recognised authority, not FIU_IND?
+  │     └─▶ ROUTE = MLAT
+  │         SAHYOG suppressed; MLAT packet offered with jurisdiction note
+  │         and published LEA-contact channel if known
+  │
+  ├─ not registered anywhere / offshore unregistered?
+  │     └─▶ ROUTE = MLAT_OR_INTERPOL
+  │         plus an advisory that voluntary cooperation is unlikely
+  │
+  ├─ entity in a sanctioned jurisdiction?
+  │     └─▶ ROUTE = ESCALATE_I4C
+  │         no direct instrument offered from this interface
+  │
+  └─ entity not resolvable?
+        └─▶ ROUTE = NONE
+            case flagged for I4C entity resolution
+            no instrument offered
+
+  THE OFFENCE-DATE EVALUATION IS THE SUBTLE PART
+    Evaluating registration "as of now" is the obvious implementation and is
+    wrong. An instrument's applicability turns on the entity's status at the
+    relevant time. The bitemporal registry in DBS §13 exists solely so this
+    decision tree can ask the correct question.
+
+
+═════════════════════════════════════════════════════════════════════════════
+17.  DECISION TREE — CONFIDENCE GATE & REVIEW ROUTING
+═════════════════════════════════════════════════════════════════════════════
+
+  INPUT: confidence_scores row for the selected path
+
+  ┌─ mc_converged = FALSE?
+  │     └─▶ INDICATIVE ONLY. Dispatch unavailable. Meter renders striped.
+  │         Recommended action: re-run with a higher sample count.
+  │
+  ├─ point_estimate ≥ action_threshold (default 0.75)?
+  │     │
+  │     ├─ AND ci_lower ≥ (action_threshold − configured tolerance)?
+  │     │     └─▶ ACTIONABLE. Dispatch path available.
+  │     │
+  │     └─ but ci_lower well below threshold (wide interval)?
+  │           └─▶ ACTIONABLE WITH NOTICE. Dispatch available, but the
+  │               sign-off screen's WHAT COULD BE WRONG section leads with
+  │               "the credible interval is wide; the point estimate alone
+  │               overstates certainty".
+  │
+  ├─ point_estimate < action_threshold?
+  │     └─▶ REVIEW_REQUIRED
+  │         case status transitions; enters analyst queue
+  │         dispatch action ABSENT (not disabled — UIX §20)
+  │
+  └─ path crosses an obfuscator?
+        └─▶ REVIEW_REQUIRED regardless of the point estimate.
+            A high score across a mixer is a signal that something is
+            wrong with the scoring, not evidence that the mixer was
+            defeated.
+
+  THE LAST BRANCH IS A DELIBERATE OVERRIDE OF THE NUMBER
+    If the pipeline ever produces a 90% confidence path that traverses a
+    mixing service, the correct engineering response is to distrust the 90%,
+    not to act on it. Encoding that as a hard routing rule rather than a
+    soft warning means the system cannot be talked into its own worst
+    failure mode by its own arithmetic.
+
+
+═════════════════════════════════════════════════════════════════════════════
+18.  DECISION TREE — EVIDENCE ADMISSIBILITY (per cited transaction)
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌─ confirmations < chain minimum?
+  │     └─▶ PENDING_FINALITY · excluded from path AND dossier
+  │
+  ├─ cited block is_orphaned?
+  │     └─▶ REORGED · excluded; triggers §7 invalidation flow
+  │
+  ├─ sources agree (canonical_digest match across ≥2 providers)?
+  │     └─▶ CROSS_VALIDATED · admissible on the primary path
+  │
+  ├─ only one provider responded?
+  │     └─▶ SINGLE_SOURCE · admissible in the graph, flagged in the dossier,
+  │         excluded from confidence uplift
+  │
+  ├─ providers disagree?
+  │     └─▶ CONFLICTED · excluded from the primary path
+  │         field-level diff shown in the conflicts panel
+  │         requires explicit analyst acknowledgement (recorded by ID) to
+  │         appear in a dossier's primary evidence table at all
+  │
+  └─ Merkle/inclusion proof verification?
+        ├─ VERIFIED           → full evidentiary weight
+        ├─ FAILED             → shown at the TOP of the evidence screen,
+        │                       never collapsed, never omitted from the
+        │                       dossier, counted in proofs_failed_count on
+        │                       the cover page
+        ├─ NOT_APPLICABLE     → alternative_mechanism MUST be populated and
+        │                       printed (the Solana case)
+        └─ UNAVAILABLE        → stated as unavailable; the transaction is
+                                not silently promoted to "verified"
+
+  THE GOVERNING PRINCIPLE
+    Nothing in this tree hides a weakness. Every downgraded state has a
+    visible representation on the artefact that leaves the building.
+
+
+═════════════════════════════════════════════════════════════════════════════
+19.  CROSS-CUTTING FLOW — PERMISSION & AUTHORITY GATES
+═════════════════════════════════════════════════════════════════════════════
+
+  Every request passes the same ordered gate chain. Order matters: cheaper
+  and more fundamental checks first, so that an unauthorised request never
+  reaches business logic.
+
+    1. ‖AUTHENTICATED‖        valid session, not revoked, not expired
+    2. ‖MFA SATISFIED‖        for any privileged permission
+    3. ‖ROLE PERMITS ACTION‖  deny-by-default; endpoint declares its
+                              required permission or the build fails
+    4. ‖JURISDICTION SCOPE‖   case belongs to the user's org tree, or an
+                              unexpired, unrevoked access grant exists
+    5. ‖LAWFUL AUTHORITY‖     for anything case-affecting: the case carries
+                              an authority reference
+    6. ‖STATE GUARD‖          the entity's state machine permits this
+                              transition
+    7. ‖RE-AUTH FRESHNESS‖    for signing/dispatch: last_reauth_at within
+                              the configured window
+    8. ‖RATE / ANOMALY‖       user-level rate limits and insider-misuse
+                              anomaly detection
+    9. → execute
+   10. ⇥ audit entry, always, including on denial
+
+  DENIALS ARE AUDITED
+    A denied action is at least as interesting as a permitted one when
+    investigating insider misuse. Logging only successes would make the
+    audit trail useless for the threat it most needs to catch (PRD RSK-002).
+
+
+═════════════════════════════════════════════════════════════════════════════
+20.  ERROR & DEGRADATION FLOWS
+═════════════════════════════════════════════════════════════════════════════
+
+20.1  PROVIDER DEGRADATION LADDER
+
+    all providers healthy
+        └─▶ full cross-validation, CROSS_VALIDATED status
+    one provider down
+        └─▶ remaining providers used; affected txs may become SINGLE_SOURCE;
+            banner: names the provider, states the consequence
+    all providers for a chain down
+        └─▶ trace pauses at INGESTING with a retry schedule; user is told
+            it is paused, not failed; work already done is preserved
+    provider returns disagreeing data
+        └─▶ CONFLICTED; provider health disagreement_count increments;
+            automatic demotion on threshold breach; alert raised
+
+  THE RULE: degrade visibly. Every degradation has a user-facing sentence
+  naming what was lost and what it means for the conclusion (PRD P5).
+
+20.2  PARTIAL RESULT FLOW
+    Partial success is the NORMAL case in multi-source ingestion, not an
+    edge case. The flow therefore has no "partial → error" transition. It
+    has a "partial → present with disclosure" transition, and the UI's
+    PARTIAL state (UIX §24) is a first-class rendering, not a fallback.
+
+20.3  NO_PATH_FOUND FLOW
+    → frontier preserved
+    → screen explains: what was searched, how deep, why it stopped
+    → offers: continue from frontier · widen depth · disable pruning and
+      re-run · add another seed address
+    → "what was established" dossier remains available
+    Never an empty screen. An empty screen after a five-minute trace is the
+    single most demoralising possible outcome for a user under time pressure.
+
+20.4  BUDGET_EXCEEDED FLOW
+    Identical to 20.3 but the explanation names which budget was hit and
+    what raising it would cost in time.
+
+20.5  SYSTEM FAILURE FLOW
+    → trace → FAILED with a correlation id
+    → the correlation id is shown to the user and is the same id in the logs
+    → completed stages are preserved; retry resumes rather than restarts
+    → never a raw stack trace, never a bare HTTP status
+
+
+═════════════════════════════════════════════════════════════════════════════
+21.  INTERACTION CHOREOGRAPHY (front-end ↔ back-end contract)
+═════════════════════════════════════════════════════════════════════════════
+
+  LONG-RUNNING OPERATION PATTERN (used for every trace)
+
+    UI                          API                       Workers
+    │  POST /traces              │                            │
+    ├───────────────────────────▶│                            │
+    │  202 + trace_id            │ ⇢ enqueue per-chain task   │
+    │◀───────────────────────────┤───────────────────────────▶│
+    │                            │                            │
+    │  subscribe ws:trace/{id}   │                            │
+    ├───────────────────────────▶│                            │
+    │                            │◀── stage progress ─────────┤
+    │◀── stage event ────────────┤                            │
+    │◀── stage event ────────────┤                            │
+    │                            │◀── terminal state ─────────┤
+    │◀── completed ──────────────┤                            │
+    │                            │                            │
+    │  GET /traces/{id}/result   │                            │
+    ├───────────────────────────▶│                            │
+    │◀── full result ────────────┤                            │
+
+  CONTRACT RULES
+    C-1  Every mutating request carries an idempotency key.
+    C-2  The WebSocket is an accelerator, never the source of truth. A
+         client that missed every event must be able to reconstruct exact
+         current state from a single GET. This is what makes "leave the page
+         and come back" work under a flaky government network.
+    C-3  Progress events carry real counts from trace_stages, never
+         interpolated or time-based estimates.
+    C-4  On WS disconnect: automatic reconnect with visible state, falling
+         back to polling. Never a silently frozen progress bar.
+    C-5  Terminal states are delivered on both channels (WS and the next
+         poll/GET), because the terminal event is the one that must not be
+         lost.
+
+
+═════════════════════════════════════════════════════════════════════════════
+22.  DESIGN RATIONALE — WHY EACH FLOW IS SHAPED THIS WAY
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌────────────────────────────┬───────────────────────────────────────────┐
+  │ Flow characteristic        │ Reason it exists                          │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Authority gate before any  │ Purpose limitation. Without it, PHANTASM  │
+  │ trace                      │ is a general-purpose surveillance tool     │
+  │                            │ with a police login. PRD LR-001/LR-002.    │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ IO has no dispatch edge    │ Separation of duties. The person under     │
+  │                            │ time pressure is not the person who        │
+  │                            │ authorises service on a third party.       │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Six gates before dispatch  │ Each guards a different failure: unlawful  │
+  │                            │ access, non-final evidence, weak           │
+  │                            │ inference, over-broad demand, unaccountable│
+  │                            │ action, wrong recipient. One combined gate │
+  │                            │ would fail all six ways at once.           │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Four distinct non-success  │ They imply four different next actions.    │
+  │ terminal states            │ "Failed" would destroy that information.   │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Mixer path still produces  │ Funds entering a mixer is itself evidence  │
+  │ a dossier                  │ of layering and is useful to a prosecutor. │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Curator gate on override-  │ Prevents the model training on its own     │
+  │ derived labels             │ corrected mistakes. PRD RSK-011.           │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Obfuscator crossing forces │ A high score across a mixer indicates a    │
+  │ review regardless of score │ scoring fault, not a defeated mixer.       │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Registry evaluated at the  │ Instrument applicability turns on status   │
+  │ offence date               │ at the relevant time, not today.           │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Typed recipient-name       │ Guards the single most damaging error the  │
+  │ confirmation               │ product can make. PRD RSK-001.             │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Frontier preserved on      │ Under a 24–72h window, discarding five     │
+  │ every budget termination   │ minutes of completed work is unacceptable. │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ Nothing is ever deleted    │ Destroying a superseded evidentiary        │
+  │                            │ artefact is itself an evidential problem.  │
+  └────────────────────────────┴───────────────────────────────────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+23.  ARCHITECTURE DECISION RECORDS
+═════════════════════════════════════════════════════════════════════════════
+
+  Format: Context · Decision · Consequences · Status
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-001  CLASSIFY BEFORE SEARCHING, NOT DURING
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Exchange hot wallets have 500k+ counterparties. A naive BFS
+               from a seed hits one within 2–4 hops and explodes O(b^d).
+  DECISION     Classify every reachable node BEFORE path search begins;
+               label custodial nodes as absorption states; the traversal
+               refuses to expand an absorbing node.
+  CONSEQUENCES + Truncates the search tree at exactly the depth where the
+                 legal question is answered.
+               + Makes the classifier's quality the dominant factor in
+                 search cost, which is measurable and improvable.
+               − Requires classification of nodes that may never be on the
+                 final path (wasted inference).
+               − A misclassified hub either explodes the search (false
+                 negative) or truncates it wrongly (false positive). The
+                 false-positive case is mitigated by the registry-first
+                 ordering in §14.
+  STATUS       ACCEPTED. This is the core architectural bet of the product.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-002  NEAREST CUSTODIAL HOP, NOT FULL OWNERSHIP CLUSTERING
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Commercial tools attempt broad entity clustering. It is a
+               harder problem, slower, and less certain.
+  DECISION     Answer exactly one question: which custodial service can be
+               lawfully compelled to identify the account holder.
+  CONSEQUENCES + Tractable engineering with defensible confidence.
+               + Maps directly onto the SAHYOG legal mechanism.
+               − Cannot answer "who owns this wallet" — deliberately.
+               − Less impressive in a feature comparison table.
+  STATUS       ACCEPTED. PRD NG1.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-003  POLYGLOT PERSISTENCE WITH NEO4J AS A DERIVED STORE
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Deep typed traversal needs a graph engine; legal artefacts
+               need ACID and immutability guarantees.
+  DECISION     PostgreSQL is the system of record for everything. Neo4j is
+               a derived, fully rebuildable traversal accelerator.
+  CONSEQUENCES + Losing the graph store loses no evidence.
+               + Graph backup is low-priority, simplifying operations.
+               − Dual-write complexity and eventual consistency between
+                 the two stores.
+               − The graph can be stale; the flow must handle that.
+  STATUS       ACCEPTED. DBS §1.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-004  CHAIN-SHARDED GRAPH WITH BRIDGE STUBS
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Neo4j does not traverse across databases. Cross-chain hops
+               are essential to real laundering patterns.
+  DECISION     One database per chain, consistent-hash routed. Cross-chain
+               hops are mirrored bridge stubs in both shards, resolved via
+               the PostgreSQL bridge_index.
+  CONSEQUENCES + Adding a chain adds a shard; no rebalancing.
+               + Per-chain scaling and retention.
+               − Cross-chain traversal is orchestrated in application code,
+                 not by the engine.
+               − Bridge correlation is probabilistic; hop confidence must
+                 be weighted by correlation_method.
+  STATUS       ACCEPTED.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-005  TRANSFER, NOT TRANSACTION, IS THE GRAPH EDGE
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      One transaction can carry native value plus N token
+               transfers plus M internal calls.
+  DECISION     The edge grain is the transfer.
+  CONSEQUENCES + Correct modelling of token and internal-call flows.
+               + Per-asset value tracing works naturally.
+               − Larger edge count; the transfers table dominates storage.
+  STATUS       ACCEPTED. Getting this grain wrong is the most common
+               modelling error in blockchain forensics systems.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-006  SOFT PRUNING, NEVER DELETION
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Temporal pruning removes dust and bot noise from the search.
+  DECISION     Pruned edges are flagged with a reason, never removed.
+  CONSEQUENCES + "Show pruned" is always available; nothing is hidden.
+               + A defence challenge to the pruning is answerable.
+               − Storage and query predicates carry the flag everywhere.
+  STATUS       ACCEPTED.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-007  APPEND-ONLY VERSIONED CLASSIFICATIONS
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Models improve; dossiers must remain reproducible forever.
+  DECISION     Classifications are never updated; a new row supersedes.
+  CONSEQUENCES + A two-year-old trace reproduces exactly.
+               + Model promotion is safe by construction.
+               − Fastest-growing table in the system.
+  STATUS       ACCEPTED. Cost accepted explicitly for reproducibility.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-008  MANDATORY POST-HOC CALIBRATION
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Raw GNN softmax outputs are not calibrated probabilities.
+  DECISION     A calibrator (isotonic or temperature scaling) is a required
+               model family; uncalibrated scores never reach the UI.
+  CONSEQUENCES + The displayed number means what the interface says it
+                 means, which is the only defensible position in court.
+               + Enables a reliability curve in the confidence explainer.
+               − An extra model to train, version, and monitor.
+  STATUS       ACCEPTED. Presenting a raw softmax to a court as a
+               probability would be indefensible.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-009  HONEST PER-CHAIN PROOF SEMANTICS
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Bitcoin has classic Merkle branches; EVM chains use
+               Merkle-Patricia tries; Solana has no equivalent per-tx
+               inclusion proof.
+  DECISION     proof_kind enum distinguishes them; where no classic proof
+               exists, alternative_mechanism is mandatory and printed.
+  CONSEQUENCES + The dossier never implies a guarantee it cannot deliver.
+               − Weaker-sounding claim for some chains, in exchange for a
+                 claim that survives expert scrutiny.
+  STATUS       ACCEPTED. A misdescribed proof is a legal exposure, not a
+               presentational detail.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-010  DATABASE-LEVEL ENFORCEMENT OF LEGAL CONTROLS
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Application-layer checks can be bypassed by a script, a
+               migration, or a future refactor.
+  DECISION     Authority gate, dispatch gate, audit immutability, temporal
+               splits, two-person promotion, and MC sample floor are all
+               enforced by CHECK constraints and triggers.
+  CONSEQUENCES + Controls survive refactors and direct DB access.
+               − Less flexible; changing a control requires a migration
+                 and a review, which is the intended friction.
+  STATUS       ACCEPTED.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-011  HASH-CHAINED AUDIT LOG, SERIALISED ON INSERT
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Tamper-evidence for the audit trail.
+  DECISION     Each entry commits to its predecessor's hash; inserts
+               serialise.
+  CONSEQUENCES + Silent tampering is detectable by the daily verifier.
+               − Audit write throughput is bounded by serialisation.
+  STATUS       ACCEPTED. Audit integrity outranks audit write speed.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-012  MOCK SAHYOG CONNECTOR BEHIND A STABLE INTERFACE
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Programmatic SAHYOG access is not available for a prototype.
+  DECISION     Interface with a mock implementation; the environment is
+               labelled MOCK in the UI, non-dismissibly.
+  CONSEQUENCES + Integration-ready without claiming integration.
+               + Honest demo.
+               − The real integration remains an open dependency (PRD OQ-01).
+  STATUS       ACCEPTED.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-013  DETERMINISM VIA PINNED PROVENANCE
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Monte Carlo scoring is stochastic; models change.
+  DECISION     Every trace pins snapshot_id, rng_seed, parameter_set,
+               model versions, and engine version.
+  CONSEQUENCES + A defence expert's replay demand is answerable.
+               − Model artefacts must be retained indefinitely.
+  STATUS       ACCEPTED.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-014  BITEMPORAL VASP REGISTRY
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      "Is X registered?" and "was X registered at the offence
+               date?" are different questions with different answers.
+  DECISION     Separate valid-time and system-time on registrations.
+  CONSEQUENCES + Correct instrument selection for historical offences.
+               + Registry corrections do not rewrite history.
+               − More complex registry editing UI.
+  STATUS       ACCEPTED.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-015  ABSENT, NOT DISABLED, FOR IMPERMISSIBLE ACTIONS
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      A disabled Dispatch button on a 43%-confidence attribution
+               invites the user to find a way to enable it.
+  DECISION     Actions that should not be contemplated in a given state are
+               removed and replaced by an explanatory panel.
+  CONSEQUENCES + Removes the temptation and the support burden.
+               − Users must learn where actions appear; mitigated by the
+                 NEXT STEP card.
+  STATUS       ACCEPTED. Note the deliberate contrast with the general rule
+               that disabled buttons must carry a reason tooltip — that
+               rule applies to temporarily unavailable actions; this ADR
+               applies to actions that are wrong in the current state.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-016  MANDATORY NON-GRAPH TABLE REPRESENTATION
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Graphs are impressive but not universally usable, not
+               screen-reader accessible, and not printable.
+  DECISION     Every graph view has an equivalent full-fidelity table view.
+  CONSEQUENCES + Accessibility conformance; court-usable printouts.
+               + Serves officers who work faster in tables.
+               − Two representations to maintain in parallel.
+  STATUS       ACCEPTED.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-017  NO LATENCY SLO UNTIL MEASURED
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      It is tempting to promise "attribution in under 60 seconds".
+  DECISION     No latency figure is published until the benchmark procedure
+               in PRD NFR-PERF-001 has been run on the actual build.
+  CONSEQUENCES + The product never makes a claim it cannot demonstrate.
+               − A weaker pitch line until benchmarks exist.
+  STATUS       ACCEPTED. An unmeasured performance claim is the easiest
+               thing for a judge or a reviewer to falsify live.
+
+─────────────────────────────────────────────────────────────────────────────
+ADR-018  FAILURE-FIRST FLOW DESIGN
+─────────────────────────────────────────────────────────────────────────────
+  CONTEXT      Most products design the success path first and treat
+               failure as exception handling.
+  DECISION     The mixer-termination flow was designed before the success
+               flow was finalised; non-success terminal states are
+               first-class, each with its own presentation and next actions.
+  CONSEQUENCES + The product is useful when it cannot answer the question.
+               + Credibility with expert reviewers.
+               − More flows to build and test than a success-only design.
+  STATUS       ACCEPTED. This is the methodological commitment that most
+               distinguishes PHANTASM from a demo.
+
+
+═════════════════════════════════════════════════════════════════════════════
+24.  REJECTED DESIGNS & WHY
+═════════════════════════════════════════════════════════════════════════════
+
+24.1  REJECTED — "EXPLORATION TOOL WITH EXPORT"
+  Shape: a free-form graph explorer; the officer explores and exports what
+  they find.
+  Rejected because: it reproduces the gap rather than closing it. It
+  requires the specialist expertise district cells do not have, produces no
+  legal instrument, and has no purpose limitation — any address could be
+  explored, which is precisely the surveillance risk PRD LR-002 forbids.
+
+24.2  REJECTED — "FULLY AUTOMATED PIPELINE"
+  Shape: address in, dispatched legal request out, no human in the loop.
+  Rejected because: legally impermissible (no automated legal action), and
+  because the first false positive would end the programme. The confidence
+  gate, analyst review, and supervisory signature exist to make the system's
+  errors survivable.
+
+24.3  REJECTED — "SINGLE GRAPH DATABASE, NO SHARDING"
+  Rejected because: adding a chain would require rebalancing, per-chain
+  scaling would be impossible, and a single engine failure would take every
+  chain offline simultaneously.
+
+24.4  REJECTED — "STORE VALUES AS FLOATS FOR SIMPLICITY"
+  Rejected because: uint256 values do not fit in a double without precision
+  loss. A rounding error in a value cited in a legal instrument is not a bug
+  report, it is a cross-examination.
+
+24.5  REJECTED — "SHOW A SINGLE CONFIDENCE NUMBER, NO INTERVAL"
+  Rejected because: a point estimate without a spread invites the reader to
+  treat it as precise. The credible interval is what makes the number
+  honest, and it is exactly what a wide-interval, high-point-estimate case
+  needs to disclose.
+
+24.6  REJECTED — "SUPPRESS FAILED PROOFS FROM THE DOSSIER"
+  Considered on the argument that a failed proof confuses a non-technical
+  reader. Rejected because concealing a failed verification is materially
+  worse than disclosing it, in every possible forum.
+
+24.7  REJECTED — "LET ANALYSTS' OVERRIDES TRAIN THE MODEL DIRECTLY"
+  Rejected because: closed feedback loop. See §6 and PRD RSK-011.
+
+24.8  REJECTED — "ALLOW DISPATCH FROM MOBILE"
+  Rejected because: a legally consequential action taken on a phone, likely
+  while distracted, with a truncated view of the evidence, is a foreseeable
+  error the design can simply prevent.
+
+
+═════════════════════════════════════════════════════════════════════════════
+25.  FLOW-LEVEL TRACEABILITY MATRIX
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────┬────────────┬────────────┬──────────┬────────────┐
+  │ Flow / state machine │ PRD ref    │ DBS ref    │ UIX ref  │ TCF ref    │
+  ├──────────────────────┼────────────┼────────────┼──────────┼────────────┤
+  │ §3 golden path       │ Journey A  │ §5,§11,§14 │ §8–§20   │ §5         │
+  │ §4 mixer termination │ Journey B  │ §11 obf.   │ §12,§16  │ §9         │
+  │ §5 offshore/MLAT     │ Journey C  │ §13        │ §18      │ §13        │
+  │ §6 analyst override  │ Journey D  │ §10        │ §13,§19  │ §8         │
+  │ §7 reorg             │ Journey E  │ §7,§12,§14 │ §17      │ §15        │
+  │ §8 case SM           │ FR-CAS-002 │ §5         │ §10      │ —          │
+  │ §9 trace SM          │ FR-ATT-005 │ §11        │ §11      │ §5,§9      │
+  │ §10 disclosure SM    │ US-SHY-011 │ §14        │ §18,§20  │ §13        │
+  │ §11 dossier SM       │ FR-EVD-005 │ §14        │ §17      │ §12        │
+  │ §12 model SM         │ US-MLP-016 │ §15        │ §22      │ §24        │
+  │ §13 chain detection  │ US-ING-002 │ §6         │ §9       │ §4         │
+  │ §14 absorption       │ US-CLS-006 │ §10,§13    │ §13      │ §8,§9      │
+  │ §15 termination      │ FR-ATT-005 │ §11        │ §11,§14  │ §9         │
+  │ §16 jurisdiction     │ US-SHY-012 │ §13        │ §18      │ §13        │
+  │ §17 confidence gate  │ US-CNF-008 │ §11        │ §15,§20  │ §10        │
+  │ §18 admissibility    │ US-ING-003 │ §8,§12     │ §16      │ §6,§11     │
+  │ §19 permission gates │ SR-001..004│ §4         │ §31      │ §21        │
+  │ §20 degradation      │ NFR-REL-001│ §8         │ §24      │ §19        │
+  └──────────────────────┴────────────┴────────────┴──────────┴────────────┘
+
+  MAINTENANCE RULE
+    Any change to a state machine or decision tree in this document requires
+    a corresponding review of the referenced sections in the other four
+    documents. A flow change that silently desynchronises from the schema's
+    CHECK constraints will surface as a production failure, because the
+    constraints will refuse the transition.
+
+─────────────────────────────────────────────────────────────────────────────
+                    END OF DESIGN FLOW — PHANTASM-DSF-v1.0
+─────────────────────────────────────────────────────────────────────────────

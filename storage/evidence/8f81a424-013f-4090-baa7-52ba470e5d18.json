@@ -1,0 +1,35 @@
+{
+  "snapshot_id": "8f81a424-013f-4090-baa7-52ba470e5d18",
+  "trace_result": {
+    "path": [
+      "seed",
+      "vasp"
+    ],
+    "vasp_node": "vasp",
+    "hop_count": 1,
+    "algorithm_used": "PPR",
+    "classifier_version": "v1",
+    "confidence_result": {
+      "score": 0.9,
+      "ci_low": 0.8,
+      "ci_high": 1.0,
+      "requires_review": false
+    }
+  },
+  "merkle_proofs": [
+    {
+      "tx_hash": "t",
+      "sibling_hashes": [],
+      "is_left_node": [],
+      "merkle_root": "r"
+    },
+    {
+      "tx_hash": "t",
+      "sibling_hashes": [],
+      "is_left_node": [],
+      "merkle_root": "r"
+    }
+  ],
+  "rng_seed": "static_seed",
+  "sealed_at": "2026-09-01T18:41:38.333761+00:00"
+}

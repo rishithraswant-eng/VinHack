@@ -1,0 +1,1534 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  PHANTASM — UI / UX REQUIREMENTS SPECIFICATION                               ║
+║  Forensic Console for Law Enforcement                                        ║
+║                                                                              ║
+║  Document ID    : PHANTASM-UIX-v1.0                                          ║
+║  Classification : RESTRICTED — LEA USE                                       ║
+║  Depends on     : PHANTASM-PRD-v1.0, PHANTASM-DBS-v1.0                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+TABLE OF CONTENTS
+─────────────────────────────────────────────────────────────────────────────
+  0.  DESIGN THESIS & NON-NEGOTIABLES
+  1.  USER CONTEXT & ENVIRONMENTAL CONSTRAINTS
+  2.  INFORMATION ARCHITECTURE & SITEMAP
+  3.  NAVIGATION MODEL
+  4.  DESIGN SYSTEM — TOKENS
+  5.  DESIGN SYSTEM — TYPOGRAPHY
+  6.  DESIGN SYSTEM — COMPONENT LIBRARY
+  7.  SCREEN SPEC 01 — LOGIN & SESSION
+  8.  SCREEN SPEC 02 — CASE DASHBOARD
+  9.  SCREEN SPEC 03 — CASE CREATION WIZARD
+ 10.  SCREEN SPEC 04 — CASE WORKSPACE
+ 11.  SCREEN SPEC 05 — TRACE LAUNCH & LIVE PROGRESS
+ 12.  SCREEN SPEC 06 — ATTRIBUTION GRAPH CANVAS
+ 13.  SCREEN SPEC 07 — NODE INSPECTOR DRAWER
+ 14.  SCREEN SPEC 08 — PATH COMPARISON & TABLE VIEW
+ 15.  SCREEN SPEC 09 — CONFIDENCE EXPLAINER
+ 16.  SCREEN SPEC 10 — EVIDENCE & PROOF VERIFICATION
+ 17.  SCREEN SPEC 11 — DOSSIER BUILDER & PREVIEW
+ 18.  SCREEN SPEC 12 — DISCLOSURE REQUEST COMPOSER
+ 19.  SCREEN SPEC 13 — REVIEW QUEUE (ANALYST)
+ 20.  SCREEN SPEC 14 — SUPERVISOR SIGN-OFF
+ 21.  SCREEN SPEC 15 — ADMIN: VASP REGISTRY
+ 22.  SCREEN SPEC 16 — ADMIN: MODEL REGISTRY
+ 23.  SCREEN SPEC 17 — AUDIT EXPLORER
+ 24.  STATE MATRIX — EMPTY / LOADING / ERROR / PARTIAL
+ 25.  MICROCOPY STANDARDS
+ 26.  ACCESSIBILITY REQUIREMENTS
+ 27.  MOTION & FEEDBACK
+ 28.  RESPONSIVE BEHAVIOUR
+ 29.  PERFORMANCE BUDGETS
+ 30.  LOCALISATION
+ 31.  UI SECURITY REQUIREMENTS
+ 32.  USABILITY VALIDATION PLAN
+
+
+═════════════════════════════════════════════════════════════════════════════
+0.  DESIGN THESIS & NON-NEGOTIABLES
+═════════════════════════════════════════════════════════════════════════════
+
+0.1  THE THESIS
+
+  This is not a data-exploration tool. It is an instrument that helps a
+  police officer decide whether to send a legal demand to a company, and
+  helps a court decide whether to believe the result.
+
+  Every design decision follows from that. A dashboard that looks impressive
+  but lets an officer sign a 42%-confidence attribution without noticing is
+  a failed design regardless of its visual quality.
+
+0.2  THE FIVE NON-NEGOTIABLES
+
+  N1  UNCERTAINTY IS NEVER DECORATIVE.
+      Confidence is shown as a distribution with a stated meaning, never as
+      a bare number, never as a green tick, never as a word like "high".
+
+  N2  THE CONSEQUENTIAL ACTION IS ALWAYS THE HARDEST ONE TO REACH.
+      Viewing is one click. Signing and dispatching is a deliberate,
+      multi-step, re-authenticated flow with a named recipient.
+
+  N3  NOTHING IS HIDDEN THAT AFFECTS THE EVIDENCE.
+      Pruned edges, conflicted sources, failed proofs, single-source data,
+      and human overrides are surfaced on the artefact itself — never only
+      in a log or a collapsed panel that defaults closed.
+
+  N4  THE GRAPH IS NEVER THE ONLY REPRESENTATION.
+      Every graph has an equivalent table. Some officers think in tables,
+      screen readers require tables, and courts print tables.
+
+  N5  THE SYSTEM NEVER SOUNDS CERTAIN WHEN IT ISN'T.
+      Microcopy is bound by §25. "Identified" and "attributed" are reserved
+      words with defined thresholds. "Suspect" is never applied to a person.
+
+0.3  DESIGN PRINCIPLES
+
+  DP1  CONSEQUENCE-PROPORTIONAL FRICTION
+       UI friction scales with legal consequence, not with engineering cost.
+
+  DP2  PROGRESSIVE TECHNICAL DISCLOSURE
+       Layer 1: plain language for the IO.
+       Layer 2: structured detail for the analyst.
+       Layer 3: raw JSON / hashes / proofs for the expert and the court.
+       Layer 1 is the default. Layer 3 is always reachable in ≤2 clicks.
+
+  DP3  THE SCREEN EXPLAINS ITSELF
+       Any officer, mid-case, at 2am, should be able to answer "what am I
+       looking at and what should I do next" from the screen alone.
+
+  DP4  NO DARK PATTERNS, INCLUDING WELL-INTENTIONED ONES
+       Never nudge toward dispatch. Never pre-tick a consent. Never make
+       "cancel" visually secondary on a destructive dialog.
+
+  DP5  DENSITY WITH BREATHING ROOM
+       Forensic work is dense. But the primary decision on each screen gets
+       whitespace around it so it cannot be missed in the density.
+
+  DP6  EVERY NUMBER IS CLICKABLE TO ITS SOURCE
+       If the UI shows a figure, clicking it reveals where it came from.
+
+
+═════════════════════════════════════════════════════════════════════════════
+1.  USER CONTEXT & ENVIRONMENTAL CONSTRAINTS
+═════════════════════════════════════════════════════════════════════════════
+
+1.1  THE REAL DEPLOYMENT ENVIRONMENT (design for this, not for a demo laptop)
+
+  Display        : 1366×768 is the design floor. 1920×1080 is the common case.
+                   4K is not assumed anywhere.
+  GPU            : Integrated graphics. The graph canvas must work without a
+                   discrete GPU.
+  Network        : Government network, often 2–10 Mbps shared, with latency
+                   spikes. Assume intermittent, not broken.
+  Browser        : Chromium-based, sometimes a version or two behind. Design
+                   to widely-supported CSS; no bleeding-edge-only features on
+                   the critical path.
+  Lighting       : Fluorescent office lighting, and night-shift work. Both a
+                   dark and a light theme are required — dark for extended
+                   night sessions, light because projectors and printouts in
+                   court settings need it.
+  Interruption   : The officer will be interrupted constantly. Every flow
+                   must be resumable; nothing is lost by navigating away.
+  Skill          : See PRD personas. Assume no blockchain literacy for the
+                   primary persona.
+  Stress         : The 24–72h dispersal window creates time pressure. Under
+                   time pressure people click the biggest button. Design
+                   accordingly: the biggest button must never be the riskiest.
+
+1.2  WHAT THIS MEANS CONCRETELY
+
+  - Autosave everything. No modal that loses work on accidental dismissal.
+  - Every long operation is backgroundable with a notification on completion.
+  - No feature that requires a second monitor.
+  - No hover-only affordances (touch laptops exist; and hover is invisible).
+  - Print stylesheets are a first-class requirement, not an afterthought.
+
+
+═════════════════════════════════════════════════════════════════════════════
+2.  INFORMATION ARCHITECTURE & SITEMAP
+═════════════════════════════════════════════════════════════════════════════
+
+  /login
+  /
+  ├── /dashboard                    Case dashboard (role-aware landing)
+  ├── /cases
+  │     ├── /new                    Case creation wizard
+  │     └── /:caseId
+  │           ├── /overview         Case workspace (default tab)
+  │           ├── /traces
+  │           │     ├── /new        Trace launch
+  │           │     └── /:traceId
+  │           │           ├── /graph      Attribution graph canvas
+  │           │           ├── /paths      Path comparison + table view
+  │           │           ├── /confidence Confidence explainer
+  │           │           ├── /evidence   Evidence & proof verification
+  │           │           └── /timeline   Stage-by-stage trace log
+  │           ├── /dossiers
+  │           │     └── /:dossierId       Dossier preview / versions
+  │           ├── /requests
+  │           │     └── /:requestId       Disclosure request detail
+  │           ├── /attachments
+  │           └── /audit                  Case-scoped audit trail
+  ├── /review                       Analyst review queue
+  ├── /approvals                    Supervisor sign-off queue
+  ├── /admin
+  │     ├── /vasps                  VASP registry
+  │     ├── /bridges                Bridge index
+  │     ├── /signatures             Contract signature index
+  │     ├── /models                 Model registry & promotion
+  │     ├── /config                 Thresholds & configuration
+  │     ├── /providers              Data provider health
+  │     └── /users                  Users, roles, grants
+  ├── /audit                        System-wide audit explorer (AUDITOR)
+  └── /help                         Glossary, guides, verifier download
+
+  IA RULES:
+   - Depth never exceeds 4 levels from root.
+   - Case is the organising spine. Nothing consequential exists outside a case
+     (enforces PRD LR-002 purpose limitation in the IA itself).
+   - Admin is a separate visual zone with a distinct header treatment so an
+     admin knows when they are changing system-wide behaviour.
+
+
+═════════════════════════════════════════════════════════════════════════════
+3.  NAVIGATION MODEL
+═════════════════════════════════════════════════════════════════════════════
+
+3.1  GLOBAL SHELL
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │ [PHANTASM]  Cases  Review(3)  Approvals(1)  Admin   [MOCK] [?] [SI R] │ ← 56px
+  ├───────────────────────────────────────────────────────────────────────┤
+  │                                                                       │
+  │                          ROUTE CONTENT                                │
+  │                                                                       │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  - Header is fixed, 56px, never scrolls away.
+  - Badge counts on Review/Approvals are live and are the primary work driver.
+  - [MOCK] environment chip is ALWAYS visible when
+    disclosure_requests.is_mock_environment is true or
+    system_config['sahyog.environment'] = "MOCK". Amber, uppercase,
+    non-dismissible. This is a hard requirement from PRD US-SHY-011 AC5 —
+    a demo must never be mistakable for a live government integration.
+  - Role chip next to the user name so the user always knows their capability.
+
+3.2  CASE-SCOPED SUB-NAVIGATION
+
+  Inside a case, a persistent context bar sits under the global header:
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │ ← PHM-2026-TN-004182 · Investment fraud · ₹18,00,000 · ACTIVE          │
+  │   Overview | Traces (2) | Dossiers (1) | Requests (0) | Files | Audit  │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  The case reference, type, loss amount and status are ALWAYS on screen
+  inside a case. An officer working six cases must never have to check which
+  one they are in before acting.
+
+3.3  KEYBOARD NAVIGATION
+  g then d    → dashboard          /  → focus search
+  g then c    → cases              ?  → keyboard shortcut overlay
+  g then r    → review queue       Esc → close drawer/modal (never submits)
+  g then a    → approvals
+  Ctrl/Cmd+K  → command palette (navigate, open case by reference, launch)
+
+3.4  BREADCRUMBS
+  Shown on every page below case level. Every segment is a real link.
+
+
+═════════════════════════════════════════════════════════════════════════════
+4.  DESIGN SYSTEM — TOKENS
+═════════════════════════════════════════════════════════════════════════════
+
+4.1  COLOUR — SEMANTIC ROLES (dark theme primary values)
+
+  SURFACES
+    --surface-base          #0B0E13   page background
+    --surface-raised        #131820   cards, panels
+    --surface-overlay       #1A212C   drawers, modals
+    --surface-sunken        #070A0E   canvas background, code blocks
+    --border-subtle         #212A38
+    --border-strong         #33405420
+
+  TEXT
+    --text-primary          #E6EDF5
+    --text-secondary        #9AA9BC
+    --text-tertiary         #64748B
+    --text-inverse          #0B0E13
+
+  BRAND / ACTION
+    --action-primary        #2F81F7   primary buttons, links
+    --action-primary-hover  #4A93FF
+    --action-focus-ring     #7FB4FF
+
+  CLASSIFICATION FAMILIES (node types — see §4.2 for the shape pairing)
+    --class-vasp            #22C55E   custodial service (the goal)
+    --class-mule            #F97316   mule / pass-through
+    --class-mixer           #A855F7   obfuscation service
+    --class-bridge          #06B6D4   cross-chain bridge
+    --class-dex             #EAB308   DEX router / pool
+    --class-staking         #14B8A6
+    --class-contract        #64748B
+    --class-sanctioned      #DC2626
+    --class-unknown         #475569   unclassified — deliberately dull
+
+  CONFIDENCE BANDS
+    --conf-high             #22C55E   ≥ threshold, actionable
+    --conf-medium           #EAB308   below threshold, review required
+    --conf-low              #F97316   well below threshold
+    --conf-insufficient     #64748B   cannot be scored
+
+  STATUS / FEEDBACK
+    --status-success        #22C55E
+    --status-warning        #F59E0B
+    --status-danger         #EF4444
+    --status-info           #38BDF8
+    --status-mock           #F59E0B   the MOCK environment chip
+
+  EVIDENCE INTEGRITY (a distinct family — never reuse status colours here,
+  because "the request succeeded" and "the proof verified" are different
+  claims and must not look identical)
+    --proof-verified        #10B981
+    --proof-failed          #EF4444
+    --proof-unavailable     #6B7280
+    --proof-notapplicable   #8B5CF6
+
+4.2  COLOUR IS NEVER ALONE (PRD NFR-ACC-002)
+
+  Every semantic colour is paired with a second, non-colour encoding:
+
+  ┌──────────────────┬─────────────┬──────────────┬────────────────────────┐
+  │ Meaning          │ Colour      │ Shape/Icon   │ Text label             │
+  ├──────────────────┼─────────────┼──────────────┼────────────────────────┤
+  │ VASP (custodial) │ green       │ hexagon      │ "Custodial service"    │
+  │ Mule             │ orange      │ circle       │ "Pass-through wallet"  │
+  │ Mixer            │ purple      │ diamond      │ "Mixing service"       │
+  │ Bridge           │ cyan        │ double-arrow │ "Cross-chain bridge"   │
+  │ DEX              │ yellow      │ triangle     │ "Exchange contract"    │
+  │ Unknown          │ slate       │ dashed circle│ "Unclassified"         │
+  │ Sanctioned       │ red         │ octagon      │ "Sanctioned entity"    │
+  │ Proof verified   │ emerald     │ ✓ seal icon  │ "Proof verified"       │
+  │ Proof failed     │ red         │ ✕ seal icon  │ "Proof failed"         │
+  │ Pruned edge      │ dimmed      │ dashed line  │ "Filtered"             │
+  │ Conflicted data  │ amber       │ ⚠ badge      │ "Sources disagree"     │
+  └──────────────────┴─────────────┴──────────────┴────────────────────────┘
+
+  A monochrome print of any screen must remain fully interpretable. This is
+  tested, not assumed — see §26.
+
+4.3  SPACING SCALE (4px base)
+  --space-1  4px   --space-2  8px   --space-3 12px   --space-4 16px
+  --space-5 20px   --space-6 24px   --space-8 32px   --space-10 40px
+  --space-12 48px  --space-16 64px
+
+4.4  RADII & ELEVATION
+  --radius-sm 4px  --radius-md 6px  --radius-lg 10px  --radius-full 999px
+  --elev-1  0 1px 2px rgba(0,0,0,.4)        cards
+  --elev-2  0 4px 12px rgba(0,0,0,.5)       drawers
+  --elev-3  0 12px 32px rgba(0,0,0,.6)      modals
+  Elevation is subtle. This is a forensic tool, not a consumer app; heavy
+  shadows read as decoration and cost rendering performance on the canvas.
+
+4.5  LIGHT THEME
+  Required, not optional. Same token names, remapped:
+    --surface-base #FFFFFF, --surface-raised #F6F8FA, --text-primary #0B0E13.
+  Classification hues shift to their 600-weight variants for contrast on
+  white. All contrast ratios re-verified independently for the light theme —
+  a palette that passes in dark does not automatically pass in light.
+
+
+═════════════════════════════════════════════════════════════════════════════
+5.  DESIGN SYSTEM — TYPOGRAPHY
+═════════════════════════════════════════════════════════════════════════════
+
+  FAMILIES
+    UI text        : Inter (fallback: system-ui, Segoe UI, Roboto)
+    Monospace      : JetBrains Mono (fallback: ui-monospace, Consolas)
+    Indic scripts  : Noto Sans Devanagari / Noto Sans Tamil for §30
+
+  MONOSPACE IS MANDATORY FOR: addresses, transaction hashes, block hashes,
+  Merkle proof hashes, case references, request references. These are
+  compared character-by-character by humans; a proportional font makes
+  0/O and l/1/I confusions likely and a transposition error here can send a
+  legal demand to the wrong company.
+
+  SCALE
+    display   28px / 34px / 600    page titles
+    h1        22px / 28px / 600    section titles
+    h2        18px / 24px / 600    card titles
+    h3        15px / 20px / 600    subsection
+    body      14px / 21px / 400    default
+    body-sm   13px / 19px / 400    dense tables
+    caption   12px / 16px / 400    labels, metadata
+    micro     11px / 14px / 500    badges, chips (uppercase, +0.04em)
+    mono      13px / 20px / 400    hashes and addresses
+    mono-sm   12px / 18px / 400    dense hash tables
+
+  14px body is the floor. Do not go below it for readable content; officers
+  work long shifts and 12px body text on a 1366px laptop is a fatigue source.
+
+  ADDRESS TRUNCATION RULE
+    Display as first 8 … last 6 characters, e.g. bc1qxy2k…8mzk9v.
+    NEVER truncate in the middle of an evidentiary export.
+    Full value always available via click-to-copy and via the table view.
+    A truncated address is always accompanied by a copy affordance —
+    an officer retyping a truncated address from screen is a defect vector.
+
+
+═════════════════════════════════════════════════════════════════════════════
+6.  DESIGN SYSTEM — COMPONENT LIBRARY
+═════════════════════════════════════════════════════════════════════════════
+
+6.1  BUTTONS
+  Variants : primary / secondary / ghost / danger / danger-confirm
+  Sizes    : sm 28px, md 34px, lg 40px
+  Rules    :
+    - One primary button per view. If two things look equally primary, the
+      design has failed to decide what the user should do.
+    - Destructive and legally-consequential actions use `danger-confirm`,
+      which requires the user to type a confirmation token (see §6.9).
+    - Disabled buttons ALWAYS carry a tooltip stating why they are disabled.
+      A silently disabled Dispatch button is a support ticket.
+    - Loading state replaces the label with a spinner + the verb in progress
+      ("Tracing…"), never an unlabelled spinner.
+
+6.2  CONFIDENCE METER  (the single most important component in the product)
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  ATTRIBUTION CONFIDENCE                                             │
+  │                                                                     │
+  │   0%        25%        50%        75%       100%                    │
+  │   ├──────────┼──────────┼──────────┼─────────┤                      │
+  │   ░░░░░░░░░░░░░░░░░░░░░░░░░░░▓▓▓▓▓███▓▓▓░░░░░                       │
+  │                            ╰─ 87.1% ── 91.3% ── 94.0% ─╯            │
+  │                               CI low   point    CI high             │
+  │                    ┊                                                │
+  │                    ┊ action threshold 75%                           │
+  │                                                                     │
+  │  91.3%  [ ABOVE ACTION THRESHOLD ]                                  │
+  │                                                                     │
+  │  This is the estimated probability that the traced funds reached    │
+  │  the identified custodial service. It is NOT a probability that     │
+  │  any person committed an offence.                                   │
+  │                                                                     │
+  │  Based on 10,000 simulated traversals · 95% credible interval       │
+  │  [ How was this calculated? ]                                       │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  REQUIREMENTS:
+    - The distribution shape is always drawn, not just the point value.
+    - The action threshold marker is always drawn, even when far away.
+    - The disclaimer sentence is fixed text, not editable, not collapsible.
+      It exists because a confidence number without a stated referent is the
+      most dangerous artefact this product can produce.
+    - Sample count and CI level always shown.
+    - "How was this calculated?" opens the confidence explainer (§15).
+    - When mc_converged = false, the meter renders in a striped pattern with
+      the label "Estimate did not converge — treat as indicative only".
+
+6.3  NODE CHIP
+  Compact representation of an address used in tables, drawers and lists.
+
+    [⬡ VASP]  bc1qxy2k…8mzk9v  ·  WazirX (deposit)  ·  92%   [⧉]
+
+  Elements: shape+colour class icon, mono truncated address, entity name if
+  known, classification probability, copy button. Clicking opens §13.
+
+6.4  EVIDENCE BADGE ROW
+  Renders on every hop and every cited transaction:
+
+    [✓ Proof verified] [✓✓ 2 sources agree] [⛓ 143 confirmations]
+
+  Failure variants, which are never suppressed:
+    [✕ Proof failed] [⚠ Sources disagree] [◷ Below finality threshold]
+    [◐ Single source] [✎ Human override] [~ Filtered edge]
+
+6.5  DATA TABLE
+  - Sticky header, sticky first column on horizontal scroll.
+  - Column visibility control; user preference persisted per table.
+  - Sort, filter, and full-text within-table search.
+  - Row density toggle: comfortable (default) / compact.
+  - Export to CSV always present — an officer will need the data in Excel,
+    and pretending otherwise means they screenshot it instead.
+  - Selection with a bulk-action bar that appears only when rows are selected.
+  - Virtualised rendering above 100 rows.
+
+6.6  TIMELINE
+  Vertical, newest-first by default with a toggle. Each entry: actor avatar
+  or system glyph, action verb, relative time with absolute on hover, and an
+  expandable detail payload rendered as formatted JSON at Layer 3.
+
+6.7  BANNER / CALLOUT
+  Variants: info / warning / danger / mock / legal.
+  The `legal` variant has a distinct treatment (left rule + serif label) and
+  is used for statutory notices and the limitations disclosure. It cannot be
+  dismissed. Its content is not user-editable.
+
+6.8  EMPTY STATE
+  Every empty state has: an illustration or glyph, one sentence of what this
+  area is for, and exactly one primary action. Never a bare "No data".
+
+6.9  CONFIRMATION DIALOG — TIERED
+
+  TIER 1 (reversible) — simple confirm/cancel.
+  TIER 2 (significant) — confirm with a summary of consequences listed.
+  TIER 3 (legally consequential, e.g. dispatch to a VASP):
+    ┌───────────────────────────────────────────────────────────────────┐
+    │  Dispatch disclosure request                                      │
+    │                                                                   │
+    │  You are about to serve a legal request on:                       │
+    │      WazirX (Zanmai Labs Pvt Ltd)                                 │
+    │      Nodal officer: <name>, <designation>                         │
+    │                                                                   │
+    │  Legal basis     Section 94, BNSS 2023                            │
+    │  Confidence      91.3%  (95% CI 87.1–94.0)                        │
+    │  Deposit address bc1qxy2k…8mzk9v                                  │
+    │  Transactions    4                                                │
+    │  Time window     12 Feb 2026 – 14 Feb 2026                        │
+    │                                                                   │
+    │  This action is recorded in the audit log and cannot be undone.   │
+    │  A withdrawal notice would have to be issued separately.          │
+    │                                                                   │
+    │  Type the exchange name to confirm:  [________________]           │
+    │                                                                   │
+    │                       [ Cancel ]    [ Sign and dispatch ]         │
+    └───────────────────────────────────────────────────────────────────┘
+
+  Typing the recipient name is deliberate friction: it is the specific error
+  this product must never make (PRD RSK-001), and forcing the officer to
+  read and reproduce the recipient's name is the cheapest effective guard.
+
+6.10  COMMAND PALETTE (Ctrl/Cmd+K)
+  Navigate, open case by reference, search address within accessible cases,
+  jump to a trace. Does NOT expose actions the user lacks permission for —
+  absent, not disabled, so the palette does not enumerate capabilities.
+
+6.11  COPY-TO-CLIPBOARD
+  Every hash, address, and reference. Feedback is a 1.2s inline "Copied"
+  chip, never a floating toast that the user may miss.
+
+
+═════════════════════════════════════════════════════════════════════════════
+7.  SCREEN SPEC 01 — LOGIN & SESSION
+═════════════════════════════════════════════════════════════════════════════
+
+  LAYOUT: centred card, 400px, on a plain surface. No marketing imagery.
+
+  ELEMENTS
+    - Agency SSO button (primary): "Sign in with department account"
+    - Local credentials (secondary, non-production environments only)
+    - MFA step as a separate screen, never inline with the password
+    - Environment chip if non-production: [ DEVELOPMENT ] / [ MOCK SAHYOG ]
+    - Legal notice: authorised use only, activity is monitored, misuse is an
+      offence. Present on the login screen itself — it is where a warning
+      about authorised access has to be.
+
+  BEHAVIOUR
+    - No enumeration: a wrong username and a wrong password produce identical
+      messaging and identical timing.
+    - Lockout after configured failures with a clear duration, never silent.
+    - Session expiry shows a warning at T-2 minutes with an extend action.
+    - Re-authentication for privileged actions is a modal that preserves all
+      page state — the officer never loses a half-composed request to it.
+
+
+═════════════════════════════════════════════════════════════════════════════
+8.  SCREEN SPEC 02 — CASE DASHBOARD
+═════════════════════════════════════════════════════════════════════════════
+
+  PURPOSE: answer "what needs me right now" in under five seconds.
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │  Good evening, SI Rakesh                             [ + New case ]   │
+  │                                                                       │
+  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐      │
+  │  │ NEEDS YOU   │ │ IN PROGRESS │ │ AWAITING    │ │ TIME        │      │
+  │  │      3      │ │      2      │ │ VASP        │ │ CRITICAL    │      │
+  │  │ review reqd │ │ traces run  │ │      4      │ │      1      │      │
+  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘      │
+  │                                                                       │
+  │  TIME-CRITICAL                                                        │
+  │  ┌─────────────────────────────────────────────────────────────────┐  │
+  │  │ ⏱ PHM-2026-TN-004201 · Investment fraud · ₹4,20,000             │  │
+  │  │   Incident 31h ago · dispersal window closing                    │  │
+  │  │   No trace launched yet                        [ Launch trace ]  │  │
+  │  └─────────────────────────────────────────────────────────────────┘  │
+  │                                                                       │
+  │  MY CASES                    [All ▾] [Status ▾] [Type ▾]  [search]    │
+  │  ┌─────────────────────────────────────────────────────────────────┐  │
+  │  │ Ref            Type          Loss      Status      Confidence   │  │
+  │  │ PHM-…004182   Investment    ₹18.0L   ATTRIBUTED   ▓▓▓▓▓░ 91%   │  │
+  │  │ PHM-…004195   Ransomware    ₹2.4L    REVIEW REQ   ▓▓░░░░ 43%   │  │
+  │  │ PHM-…004201   Investment    ₹4.2L    ACTIVE       —             │  │
+  │  └─────────────────────────────────────────────────────────────────┘  │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  DESIGN NOTES
+   - TIME-CRITICAL is computed from incident_occurred_at against the
+     configured dispersal window. It is the top section because velocity is
+     the product's core value proposition and the dashboard should embody it.
+   - Confidence in the list is a mini-meter, never a bare number, and never
+     coloured green without the numeral beside it.
+   - Cases in REVIEW_REQUIRED are visually distinct but NOT alarming-red;
+     review-required is a normal outcome, not an error, and styling it as an
+     error would train officers to see the review gate as a nuisance.
+   - Role-aware: an ANALYST lands on the review queue instead; a SUPERVISOR
+     lands on approvals.
+
+
+═════════════════════════════════════════════════════════════════════════════
+9.  SCREEN SPEC 03 — CASE CREATION WIZARD
+═════════════════════════════════════════════════════════════════════════════
+
+  Three steps, with a persistent progress indicator and full back-navigation.
+
+  STEP 1 — CASE DETAILS
+    Fields: title, case type (select), priority, incident occurred at,
+            complaint filed at, reported loss (₹, with a formatted input
+            that shows the Indian digit grouping as typed).
+
+  STEP 2 — LAWFUL AUTHORITY  (this step cannot be skipped)
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  ⚖ LAWFUL AUTHORITY                                             │
+    │                                                                 │
+    │  PHANTASM will not run a trace without a recorded authority      │
+    │  reference. At least one of the following is required.           │
+    │                                                                 │
+    │  FIR number            [________________]                       │
+    │  NCRP acknowledgement  [________________]                       │
+    │  Written authority ref [________________]                       │
+    │                                                                 │
+    │  Recorded by: SI Rakesh Kumar · 31 Aug 2026 19:42               │
+    └─────────────────────────────────────────────────────────────────┘
+    The explanatory sentence is deliberate. The officer should understand
+    this is a legal control, not a form field the developer added.
+
+  STEP 3 — SEED ADDRESSES
+    - Paste one or many addresses (newline or comma separated) or upload CSV.
+    - Live validation per address as typed:
+        ✓ bc1qxy2k…8mzk9v      Bitcoin        412 transactions
+        ⚠ 0x7a3b…f091          Ambiguous      appears on Ethereum (1,204 tx)
+                                              and Polygon (3 tx)
+                                              [ Ethereum ] [ Polygon ]
+        ✕ 1A1zP1eP5QGefi2…     Invalid checksum
+    - Ambiguous 0x addresses present an explicit choice ranked by activity
+      (PRD US-ING-002 AC2). The system never silently guesses.
+    - For each address: seed role (primary suspect / victim source /
+      secondary) and source of the address (complaint / bank record / device
+      forensics / OSINT). The second field is mandatory because a court will
+      ask how the investigator obtained it.
+    - High-activity warning: "This address has 412 transactions. Tracing may
+      take longer and produce a large graph."
+
+  ON SUBMIT
+    Case created in DRAFT if authority missing, ACTIVE otherwise. Redirect to
+    case workspace with a next-step prompt, not a bare success toast.
+
+
+═════════════════════════════════════════════════════════════════════════════
+10.  SCREEN SPEC 04 — CASE WORKSPACE
+═════════════════════════════════════════════════════════════════════════════
+
+  Two-column: 68% main, 32% rail.
+
+  MAIN
+    - Case header (see §3.2) with inline-editable title and status control.
+    - NEXT STEP card: a single, unambiguous recommended action based on case
+      state. This is the anti-paralysis component.
+        no trace           → "Launch a trace on the seed address"
+        trace complete     → "Review the attribution and generate a dossier"
+        low confidence     → "Attribution is below the action threshold —
+                              send to analyst review"
+        dossier ready      → "Prepare the disclosure request"
+        awaiting supervisor→ "Waiting for DSP Menon to sign"
+        dispatched         → "Awaiting VASP response · SLA due in 4 days"
+    - Seed addresses list with node chips and per-address trace history.
+    - Traces list: status, confidence, terminal VASP, launched by, duration.
+    - Dossiers list with version lineage and validity state.
+    - Disclosure requests with lifecycle chips and SLA countdown.
+
+  RAIL
+    - Case timeline (§6.6), newest first, filterable by event class.
+    - Attachments with hash and scan status.
+    - Team: assigned IO, supervisor, any active access grants with expiry.
+
+  BEHAVIOUR
+    - Everything autosaves; an inline "Saved" indicator, no save button.
+    - A case in REVIEW_REQUIRED shows a persistent, non-dismissible banner
+      explaining what review means and who can perform it.
+
+
+═════════════════════════════════════════════════════════════════════════════
+11.  SCREEN SPEC 05 — TRACE LAUNCH & LIVE PROGRESS
+═════════════════════════════════════════════════════════════════════════════
+
+11.1  LAUNCH PANEL
+
+  Two modes with a clear default.
+
+  STANDARD (default, what the IO sees):
+    Seed address       [node chip, preselected]
+    Attribution method [Proportional ▾]  ⓘ
+    [ Start trace ]
+
+    Everything else uses configured defaults. The IO is not asked about
+    Monte Carlo sample counts, and should never be.
+
+  ADVANCED (collapsed, for ANALYST role):
+    Max depth                    [ 12 ]   range 1–30
+    Candidate paths (K)          [  3 ]   range 1–10
+    Value floor                  [ 1% ]   ignore branches below this share
+    Time budget                  [ 5m ]
+    Temporal pruning             [✓] on
+    Monte Carlo samples          [ 10000 ]
+    OPSEC mode (self-hosted only)[ ] off  ⓘ slower; no third-party API sees
+                                            these addresses
+    Attribution accounting       [ Proportional | FIFO | Poison ] ⓘ
+
+    Each control shows its configured safe range. Any deviation from defaults
+    is recorded on the trace and displayed on the results page and in the
+    dossier — a non-default parameter set is a fact a court is entitled to.
+
+11.2  LIVE PROGRESS
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │  Tracing bc1qxy2k…8mzk9v                        Elapsed 00:41  [Stop] │
+  │                                                                       │
+  │  ✓ INGESTING     1,284 transactions · 4 sources · 3 conflicts         │
+  │  ✓ PRUNING       412 edges filtered (dust, bot bursts)                │
+  │  ▸ CLASSIFYING   847 / 1,102 nodes                    ▓▓▓▓▓▓▓░░░ 77%  │
+  │  ○ SEARCHING                                                          │
+  │  ○ SCORING                                                            │
+  │  ○ SEALING                                                            │
+  │                                                                       │
+  │  Live findings                                                        │
+  │  · Hop 2 shows a peel-chain pattern                                   │
+  │  · 3 transactions have conflicting data between sources   [ view ]    │
+  │  · 1 node classified as a mixing service                              │
+  │                                                                       │
+  │  You can leave this page. We'll notify you when it completes.         │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  REQUIREMENTS
+   - WebSocket-driven; falls back to polling on connection loss with a
+     visible "reconnecting" state rather than a frozen bar.
+   - Per-stage counts are real, not simulated. A fake progress bar in an
+     evidentiary tool is a small lie that undermines a large claim.
+   - "Live findings" surfaces material events as they happen so the officer
+     is not surprised by them at the end.
+   - Stop is always available and produces a partial result with its
+     frontier preserved (PRD FR-ATT-007), never a discarded run.
+   - Notification on completion: in-app and, if configured, email.
+
+
+═════════════════════════════════════════════════════════════════════════════
+12.  SCREEN SPEC 06 — ATTRIBUTION GRAPH CANVAS
+═════════════════════════════════════════════════════════════════════════════
+
+12.1  LAYOUT
+
+  ┌──────────────┬────────────────────────────────────────┬───────────────┐
+  │ LEFT PANEL   │           GRAPH CANVAS                 │ RIGHT DRAWER  │
+  │ 260px        │           flexible, WebGL              │ 380px         │
+  │              │                                        │ (collapsible) │
+  │ Paths        │   ⬡seed ──▶ ○ ──▶ ◇ ──▶ ⬡VASP          │ Node inspector│
+  │ ▸ #1  91.3%  │                                        │ (§13)         │
+  │   #2  62.0%  │                                        │               │
+  │   #3  48.1%  │                                        │               │
+  │              │                                        │               │
+  │ Layers       │                                        │               │
+  │ ☑ Primary    │                                        │               │
+  │ ☐ Alternates │                                        │               │
+  │ ☐ Pruned(412)│                                        │               │
+  │ ☑ Labels     │                                        │               │
+  │              │                                        │               │
+  │ Legend       │                                        │               │
+  │ ⬡ Custodial  │                                        │               │
+  │ ○ Mule       │                                        │               │
+  │ ◇ Mixer      │                                        │               │
+  │ ⬢ Bridge     │                                        │               │
+  │ ▽ DEX        │                                        │               │
+  │ ⊙ Unknown    │                                        │               │
+  └──────────────┴────────────────────────────────────────┴───────────────┘
+   Canvas toolbar (top-right, floating): zoom in/out, fit, layout mode,
+   timeline scrubber toggle, screenshot, full-screen, TABLE VIEW toggle.
+
+12.2  VISUAL ENCODING
+
+  NODE
+    shape        classification family (see §4.2 table)
+    fill         classification colour
+    size         log-scaled by value flowing through the node, clamped to
+                 a 3× range so a hot wallet does not dwarf the seed
+    border       confidence band of the classification
+                 solid = high, dashed = medium, dotted = abstained
+    ring         seed node has a distinct double ring
+    badge        overlay glyphs: ⚠ conflicted, ✎ overridden, ⛓ absorption
+    label        entity name if known, else truncated address
+
+  EDGE
+    thickness    log-scaled by value transferred
+    style        solid = observed transfer
+                 dashed = inference edge (co-spend, change)
+                 dotted+dim = pruned
+    colour       inherits asset family; stablecoin transfers get a distinct
+                 hue because they dominate illicit flow and are worth seeing
+    arrow        direction of value movement, always drawn
+    animation    the primary path animates value direction ONCE on load,
+                 then stops. Continuously animated edges are a performance
+                 cost and an accessibility problem (vestibular triggers).
+
+  THE PRIMARY PATH IS VISUALLY DOMINANT
+    Non-path nodes render at 35% opacity by default. The officer's eye should
+    land on the answer, with context available rather than competing.
+
+12.3  INTERACTIONS
+
+  click node          → open inspector drawer (§13)
+  double-click node   → expand one hop from that node (budget-checked)
+  click edge          → transaction detail popover with proof status
+  hover               → highlight the connected subpath
+  drag                → pan;  scroll → zoom;  Ctrl+scroll → zoom fine
+  right-click node    → context menu: copy address, open in explorer,
+                        reclassify (role-gated), exclude from path,
+                        mark as VASP-confirmed (role-gated)
+  box-select          → select multiple, then bulk-inspect in table view
+  keyboard            → Tab traverses nodes in path order; Enter opens the
+                        inspector; arrow keys move along the path. This is
+                        not optional (§26).
+
+12.4  LAYOUT MODES
+   - HIERARCHICAL (default): seed at left, hops advancing rightward. This is
+     the layout that maps to how the officer thinks: money moved this way.
+   - FORCE-DIRECTED: for exploring dense neighbourhoods.
+   - TEMPORAL: x-axis is time, revealing burst structure directly. This is
+     the layout where a peel chain becomes visually obvious.
+   Layout choice is persisted per user.
+
+12.5  TIMELINE SCRUBBER (optional layer)
+   A horizontal control below the canvas that filters edges by block time,
+   letting the officer replay the dispersal. Playback is manual by default;
+   auto-play is opt-in and pausable.
+
+12.6  PERFORMANCE
+   - WebGL rendering (Cytoscape.js WebGL or equivalent).
+   - ≥30 FPS at 5,000 nodes / 15,000 edges on integrated graphics.
+   - Above that: progressive disclosure — render the path plus a 2-hop
+     neighbourhood, with an explicit "N further nodes not shown" control.
+     Never silently drop nodes; a graph that quietly omits data is worse
+     than a graph that says it is omitting data.
+   - Level-of-detail: labels hide below a zoom threshold; node detail
+     simplifies at distance.
+
+12.7  MANDATORY TABLE VIEW TOGGLE
+   A single control switches the entire canvas to §14's table representation
+   of exactly the same data. Not a reduced version — the same data. This
+   satisfies N4, NFR-ACC-003, and the reality that some officers simply work
+   faster in tables.
+
+
+═════════════════════════════════════════════════════════════════════════════
+13.  SCREEN SPEC 07 — NODE INSPECTOR DRAWER
+═════════════════════════════════════════════════════════════════════════════
+
+  380px right drawer, four sections, progressive disclosure per DP2.
+
+  ┌─────────────────────────────────────────────────────────┐
+  │  ⬡  CUSTODIAL SERVICE                              [✕]  │
+  │  bc1qxy2k…8mzk9v                                   [⧉]  │
+  │  WazirX · deposit address                               │
+  │  ───────────────────────────────────────────────────    │
+  │  CLASSIFICATION                                         │
+  │  Custodial service (deposit)              92.4%         │
+  │  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░                                   │
+  │                                                         │
+  │  Other possibilities                                    │
+  │    Pass-through wallet                     4.1%         │
+  │    Unclassified                            2.0%         │
+  │    Exchange hot wallet                     1.5%         │
+  │                                                         │
+  │  Why this classification?                    [expand]   │
+  │   · Registry match: address listed for WazirX           │
+  │   · Fan-in pattern typical of deposit addresses         │
+  │   · Onward flow consolidates to a known hot wallet      │
+  │   · No contract bytecode (externally owned account)     │
+  │                                                         │
+  │  Model  HGT v0.4.2 · calibrated · features fs-11        │
+  │  ───────────────────────────────────────────────────    │
+  │  ON-CHAIN SUMMARY                                       │
+  │  First seen      12 Jan 2026                            │
+  │  Last activity   14 Feb 2026                            │
+  │  Transactions    1,204                                  │
+  │  In / out degree 1,180 / 24                             │
+  │  ───────────────────────────────────────────────────    │
+  │  TIMING PATTERN                                         │
+  │  Organic  ·  branching ratio 0.21                       │
+  │  [ view intensity chart ]                               │
+  │  ───────────────────────────────────────────────────    │
+  │  DATA INTEGRITY                                         │
+  │  [✓✓ 2 sources agree]  [⛓ 143 confirmations]            │
+  │  ───────────────────────────────────────────────────    │
+  │  [ Reclassify ]        [ View raw data ]                │
+  └─────────────────────────────────────────────────────────┘
+
+  DESIGN NOTES
+   - "Other possibilities" is always shown. Displaying only the argmax label
+     misrepresents a probabilistic system as a deterministic one.
+   - "Why this classification?" content must be faithful to the model's
+     actual computation (PRD US-OBS-017 AC3). Where a faithful explanation
+     is unavailable for a component, this section says so explicitly rather
+     than generating plausible-sounding prose.
+   - "View raw data" is Layer 3: full JSON, all probabilities, feature
+     vector, attention summary, provider payload digests.
+   - RECLASSIFY (role-gated) opens a form requiring a minimum-length written
+     justification, shows the impact ("re-scores 2 paths"), and states that
+     the override will be disclosed in the dossier with the officer's name
+     and rank. The officer should know that before they click, not after.
+
+
+═════════════════════════════════════════════════════════════════════════════
+14.  SCREEN SPEC 08 — PATH COMPARISON & TABLE VIEW
+═════════════════════════════════════════════════════════════════════════════
+
+14.1  PATH COMPARISON
+
+  Side-by-side cards for the top-K candidate paths:
+
+  ┌──────────────────────┬──────────────────────┬──────────────────────┐
+  │ PATH 1   RECOMMENDED │ PATH 2               │ PATH 3               │
+  │ ▓▓▓▓▓▓▓▓▓░ 91.3%     │ ▓▓▓▓▓▓░░░░ 62.0%     │ ▓▓▓▓░░░░░░ 48.1%     │
+  │ 4 hops               │ 6 hops               │ 3 hops               │
+  │ WazirX (deposit)     │ Binance (deposit)    │ Unknown service      │
+  │ FIU-registered ✓     │ Offshore ⚠           │ Not identified       │
+  │ ₹17.4L (96.7%)       │ ₹0.4L (2.2%)         │ ₹0.2L (1.1%)         │
+  │ No obfuscators       │ 1 bridge crossing    │ No obfuscators       │
+  │ 4/4 proofs verified  │ 6/6 proofs verified  │ 2/3 proofs verified  │
+  │ [ Select ]           │ [ Select ]           │ [ Select ]           │
+  └──────────────────────┴──────────────────────┴──────────────────────┘
+
+  - "RECOMMENDED" is a label on the highest-confidence path, not a
+    pre-selection. The officer selects deliberately.
+  - Value fraction is shown because a high-confidence path carrying 1% of
+    the funds is much less useful than a lower-confidence path carrying 96%,
+    and an interface that hides that invites the wrong choice.
+
+14.2  HOP TABLE (the mandatory non-graph representation)
+
+  ┌────┬──────────────┬──────────────┬────────┬─────────┬──────────────────┐
+  │Hop │ From         │ To           │ Asset  │ Value   │ Evidence         │
+  ├────┼──────────────┼──────────────┼────────┼─────────┼──────────────────┤
+  │ 0  │ bc1qxy…mzk9v │ bc1qab…7fd2c │ BTC    │ 0.2140  │ ✓ proof ✓✓ 2 src │
+  │    │ SEED         │ Pass-through │        │         │ 812,441 · 143 cnf│
+  │    │ tx a3f9…c21b · 12 Feb 2026 14:22 UTC                              │
+  ├────┼──────────────┼──────────────┼────────┼─────────┼──────────────────┤
+  │ 1  │ bc1qab…7fd2c │ bc1qcd…9e11a │ BTC    │ 0.2138  │ ✓ proof ✓✓ 2 src │
+  │    │ Pass-through │ Pass-through │        │         │ peel-chain ⚠      │
+  │    │ tx b7e2…88f0 · 12 Feb 2026 14:31 UTC                              │
+  └────┴──────────────┴──────────────┴────────┴─────────┴──────────────────┘
+
+  - Every hop row expands to show the full transaction record, all provider
+    responses, the Merkle proof, and the classification of both endpoints.
+  - Exportable to CSV and printable with a dedicated print stylesheet.
+  - This table is the artefact that goes into the case diary. It is designed
+    to be legible on paper first and on screen second.
+
+
+═════════════════════════════════════════════════════════════════════════════
+15.  SCREEN SPEC 09 — CONFIDENCE EXPLAINER
+═════════════════════════════════════════════════════════════════════════════
+
+  Opened from the confidence meter. Its job is to make a supervisory officer
+  able to defend the number, not to impress them with it.
+
+  SECTIONS
+
+  1. WHAT THIS NUMBER MEANS
+     Plain language, fixed text:
+       "91.3% is our estimate of the probability that the funds from the
+        seed address reached the identified custodial service along this
+        path. It is not a measure of anyone's guilt, and it is not a
+        statement about who controls any address."
+
+  2. HOW IT WAS CALCULATED
+     "We simulated 10,000 random traversals of the transaction graph,
+      weighted by transfer value and recency. 9,130 of them terminated at
+      this service. The credible interval reflects the spread of those
+      simulations."
+     Plus a small histogram of simulation outcomes.
+
+  3. WHAT DROVE IT UP AND DOWN
+     ┌───────────────────────────────────────────────────────────┐
+     │  Classification certainty     ████████████░░  +   strong  │
+     │  Source corroboration         ██████████████  +   strong  │
+     │  Temporal coherence           ████████░░░░░░  +   moderate│
+     │  Path length (4 hops)         ██████░░░░░░░░  −   slight  │
+     │  Obfuscation encountered      ░░░░░░░░░░░░░░      none    │
+     └───────────────────────────────────────────────────────────┘
+
+  4. WHAT WOULD CHANGE IT
+     "If the mixing service at hop 2 had been on this path, confidence would
+      be substantially lower. If only one data source had been available,
+      it would drop by roughly X points."
+
+  5. HOW WELL CALIBRATED IS THIS MODEL
+     Reliability curve for the active model version, plus its ECE and Brier
+     score, with a one-sentence reading guide: "On past cases, when this
+     model said 90%, it was correct about N% of the time."
+     If calibration data is insufficient, the section says so plainly rather
+     than showing an empty chart.
+
+  6. LIMITATIONS
+     Non-collapsible. States the evaluation dataset, its known
+     unrepresentativeness for Indian typologies, and the fact that accuracy
+     on sparse zero-day wallets is materially lower.
+
+
+═════════════════════════════════════════════════════════════════════════════
+16.  SCREEN SPEC 10 — EVIDENCE & PROOF VERIFICATION
+═════════════════════════════════════════════════════════════════════════════
+
+  PURPOSE: let a non-cryptographer see that the evidence checks out, and let
+  a cryptographer check it themselves.
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │  EVIDENCE INTEGRITY                                                   │
+  │                                                                       │
+  │  4 of 4 cited transactions have verified inclusion proofs.            │
+  │  [ ✓ ] [ ✓ ] [ ✓ ] [ ✓ ]                                              │
+  │                                                                       │
+  │  ┌─ tx a3f9…c21b ───────────────────────────── [✓ Verified] ───────┐  │
+  │  │ Block 812,441 · 143 confirmations · Bitcoin                      │  │
+  │  │ Proof type   Transaction Merkle branch (double SHA-256)          │  │
+  │  │ Merkle root  4a7d…f0e2   (matches block header)                  │  │
+  │  │ Path depth   12 hashes                                           │  │
+  │  │                                                                  │  │
+  │  │ [ Show proof path ]  [ Verify independently ]  [ Copy JSON ]     │  │
+  │  └──────────────────────────────────────────────────────────────────┘  │
+  │                                                                       │
+  │  ┌─ SOLANA NOTE ───────────────────────────────────────────────────┐  │
+  │  │ Solana does not provide per-transaction Merkle inclusion proofs  │  │
+  │  │ of the Bitcoin kind. For Solana transactions this dossier cites  │  │
+  │  │ <alternative mechanism> instead. This is stated so the           │  │
+  │  │ difference is visible rather than implied away.                  │  │
+  │  └──────────────────────────────────────────────────────────────────┘  │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  REQUIREMENTS
+   - "Verify independently" downloads a self-contained verifier bundle
+     (proof JSON + the standalone verification script) and shows the exact
+     command to run. This is the demo moment that separates PHANTASM from a
+     tool that merely asserts integrity.
+   - A FAILED proof renders in full, at the top, with an explanation of what
+     failure means and what to do. It is never collapsed, never sorted to the
+     bottom, never omitted from the dossier.
+   - The per-chain proof semantics note (PRD US-EVD-009 AC3) appears wherever
+     a non-classical proof kind is used. This honesty is a legal safeguard,
+     not a caveat to be minimised in the layout.
+   - CONFLICTED sources are shown as a field-level diff between providers,
+     so the officer can see exactly what disagreed.
+
+
+═════════════════════════════════════════════════════════════════════════════
+17.  SCREEN SPEC 11 — DOSSIER BUILDER & PREVIEW
+═════════════════════════════════════════════════════════════════════════════
+
+  SPLIT VIEW: composition controls left (35%), live PDF preview right (65%).
+
+  COMPOSITION CONTROLS
+    Sections (all default ON; the starred ones cannot be turned off):
+      ☑ Cover page with dossier hash                    ★
+      ☑ Case and authority reference                    ★
+      ☑ Statutory certificate (Sec 63 BSA / 65B)        ★
+      ☑ Methodology summary
+      ☑ Hop-by-hop attribution table                    ★
+      ☑ Per-transaction evidence and proofs             ★
+      ☑ Confidence analysis                             ★
+      ☑ Classification detail and model versions
+      ☑ Temporal analysis
+      ☑ Human overrides and analyst notes               ★ (if any exist)
+      ☑ LIMITATIONS AND KNOWN FAILURE MODES             ★
+      ☑ Independent verification appendix               ★
+      ☐ Alternate paths considered
+      ☐ Full raw evidence annexure
+
+    Language: [ English ▾ ]   Template: [ v1.2 ▾ ]
+
+    Certifying officer: preselected from the authenticated session,
+    not editable as free text (PRD US-EVD-010 AC2).
+
+  THE STARRED SECTIONS ARE THE POINT
+    A user cannot produce a PHANTASM dossier that omits its limitations, its
+    confidence analysis, its proofs, or a record of human overrides. If they
+    could, the first thing that would happen in a contested case is that
+    someone would.
+
+  PREVIEW
+    Live-rendered, page-numbered, scrollable, with a section jump list.
+    Shows the dossier hash on the cover as it will be printed.
+
+  GENERATE
+    Tier-2 confirmation summarising: hop count, confidence, proofs verified /
+    failed, sections included, certifying officer. On success: immutable
+    record created, download offered, case timeline updated.
+
+  VERSIONING
+    Regeneration requires a stated reason and produces v(n+1) linked to the
+    prior version. The superseded version remains downloadable, watermarked
+    SUPERSEDED, because destroying a superseded evidentiary artefact is
+    itself an evidential problem.
+
+  INVALIDATION
+    If a re-validation job detects a reorg affecting a cited transaction, the
+    dossier is marked INVALIDATED with a red banner on the case, on the
+    dossier list, and stamped on the file itself on any subsequent download.
+
+
+═════════════════════════════════════════════════════════════════════════════
+18.  SCREEN SPEC 12 — DISCLOSURE REQUEST COMPOSER
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │  DISCLOSURE REQUEST                          [MOCK ENVIRONMENT]       │
+  │                                                                       │
+  │  RECIPIENT                                                            │
+  │  ┌─────────────────────────────────────────────────────────────────┐  │
+  │  │ WazirX (Zanmai Labs Private Limited)                            │  │
+  │  │ FIU-IND registered · SAHYOG onboarded                           │  │
+  │  │ Nodal officer: <name>, <designation>                            │  │
+  │  │ Channel: SAHYOG portal                                          │  │
+  │  │ Registry verified on: 12 Aug 2026            [ change ]         │  │
+  │  └─────────────────────────────────────────────────────────────────┘  │
+  │                                                                       │
+  │  LEGAL BASIS      [ Section 94, BNSS 2023 ▾ ]                         │
+  │                                                                       │
+  │  SCOPE                                        ⓘ Keep this minimal     │
+  │  Deposit address  bc1qxy2k…8mzk9v            [auto]                   │
+  │  Transactions     4 selected                  [ review ]              │
+  │  Time window      12 Feb 2026 – 14 Feb 2026  [auto]                   │
+  │                                                                       │
+  │  DATA REQUESTED                                                       │
+  │  ☑ KYC records for the account holder                                 │
+  │  ☑ Account opening details and linked bank account                    │
+  │  ☑ IP / device logs for the deposit window                            │
+  │  ☐ Full account transaction history        ⚠ likely out of scope      │
+  │  ☐ Freeze request for the credited amount                             │
+  │                                                                       │
+  │  ┌─ SCOPE CHECK ────────────────────────────────────────────────┐    │
+  │  │ ✓ Time window is bounded to the traced transactions           │    │
+  │  │ ✓ Address list contains only the terminal deposit address     │    │
+  │  │ ⚠ "Full account transaction history" exceeds the traced       │    │
+  │  │    window. Requesting it may draw a scope objection.          │    │
+  │  └───────────────────────────────────────────────────────────────┘    │
+  │                                                                       │
+  │  PREVIEW  [ live document preview ]                                   │
+  │                                                                       │
+  │  [ Save draft ]                        [ Send for approval → ]        │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  DESIGN NOTES
+   - Every auto-filled field carries an [auto] tag; editing it converts the
+     tag to [edited] with a hover diff against the machine value. The record
+     of what the machine proposed versus what the officer sent protects both.
+   - The SCOPE CHECK panel is the UI expression of PRD LR-006 data
+     minimisation. Warnings are advisory for most items but blocking for
+     configured hard limits.
+   - The IO cannot dispatch. The only forward action available to an IO is
+     "Send for approval". Dispatch lives with the supervisor (§20). This
+     separation is structural, not a permission checkbox.
+   - The MOCK chip is prominent and repeated on this screen specifically,
+     because this is the screen a demo audience will remember.
+
+
+═════════════════════════════════════════════════════════════════════════════
+19.  SCREEN SPEC 13 — REVIEW QUEUE (ANALYST)
+═════════════════════════════════════════════════════════════════════════════
+
+  PURPOSE: let an analyst triage 40 machine attributions a day.
+
+  LAYOUT: list left (40%), detail right (60%), keyboard-driven.
+
+  LIST ROW
+    Case ref · confidence meter · terminal entity · hop count · flags
+    Flags: [mixer] [bridge] [conflicted] [single-source] [proof-failed]
+           [offshore] [zero-day-wallet]
+
+  SORTING DEFAULT
+    By "review value": low confidence AND high traced value first. An
+    analyst's scarce attention should go where the machine is least sure and
+    the money is largest — not simply to the newest item.
+
+  DETAIL PANE
+    Condensed graph, hop table, confidence decomposition, and the three
+    analyst actions:
+      [ Accept attribution ]   → advances the case
+      [ Reclassify a node ]    → §13 override flow
+      [ Reject attribution ]   → requires a written reason; the case returns
+                                 to the IO with the analyst's note
+    Every action requires the analyst to have opened the evidence tab at
+    least once for that trace. Accepting without looking is possible in a
+    bad tool; here the button stays disabled with the tooltip "Open the
+    evidence tab before accepting."
+
+  KEYBOARD
+    j/k next/previous · a accept · r reject · o open full trace · ? shortcuts
+
+
+═════════════════════════════════════════════════════════════════════════════
+20.  SCREEN SPEC 14 — SUPERVISOR SIGN-OFF
+═════════════════════════════════════════════════════════════════════════════
+
+  Designed for a five-minute decision by a legally-literate non-specialist.
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │  APPROVAL REQUIRED                                                    │
+  │  PHM-2026-TN-004182 · Investment fraud · ₹18,00,000                    │
+  │                                                                       │
+  │  THE REQUEST                                                          │
+  │  Serve a Section 94 BNSS disclosure request on WazirX for the account │
+  │  behind deposit address bc1qxy2k…8mzk9v, covering 4 transactions      │
+  │  between 12 and 14 February 2026.                                     │
+  │                                                                       │
+  │  THE BASIS                                                            │
+  │  ▓▓▓▓▓▓▓▓▓░ 91.3%  (95% CI 87.1 – 94.0)   above the 75% threshold     │
+  │  4 hops · no mixing services · 4 of 4 proofs verified                 │
+  │  2 independent data sources agree on every cited transaction          │
+  │                                                                       │
+  │  WHAT COULD BE WRONG                                                  │
+  │  · Hop 2 shows an automated peel-chain pattern; timing correlation    │
+  │    is strong but not conclusive                                       │
+  │  · The classifier has materially lower accuracy on wallets with       │
+  │    sparse history; hop 3 has 11 lifetime transactions                 │
+  │  · Attribution identifies a service, not a person                     │
+  │                                                                       │
+  │  WHO HAS REVIEWED IT                                                  │
+  │  SI Rakesh Kumar  · launched and prepared   · 31 Aug 19:42            │
+  │  Analyst P. Menon · accepted attribution    · 31 Aug 20:15            │
+  │  1 node was reclassified by the analyst     [ view justification ]    │
+  │                                                                       │
+  │  [ View full dossier ]  [ Return to officer ]  [ Sign and dispatch ]  │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  DESIGN NOTES
+   - "WHAT COULD BE WRONG" is a required, generated section. A sign-off
+     screen that shows only supporting evidence is an instrument for
+     manufacturing false confidence. This section is the reason the screen
+     is trustworthy.
+   - "Sign and dispatch" triggers re-authentication + the Tier-3 dialog
+     (§6.9) with the typed-name confirmation.
+   - "Return to officer" requires a comment.
+   - If confidence is below threshold, "Sign and dispatch" is not merely
+     disabled — it is absent, replaced by an explanatory panel describing
+     the review path. Absent beats disabled for actions that should not be
+     contemplated at all in this state.
+
+
+═════════════════════════════════════════════════════════════════════════════
+21.  SCREEN SPEC 15 — ADMIN: VASP REGISTRY
+═════════════════════════════════════════════════════════════════════════════
+
+  - Searchable table of VASP entities with registration status, SAHYOG
+    onboarding, jurisdiction, nodal officers, known addresses.
+  - Every registration row shows `source_reference` and `source_verified_on`
+    prominently. A row whose verification date is older than a configured
+    staleness window is flagged: "Not verified in 180 days".
+  - Bitemporal editing UI: changing a status asks "effective from what date"
+    separately from "recorded now", because those are different facts.
+  - Bulk import from CSV with a mandatory source citation per row.
+  - Every edit is audited and requires a justification.
+  - A prominent notice: "Registration counts and statuses change. This
+    registry is only as current as its last verification." — the UI
+    expression of PRD §0.5.
+
+
+═════════════════════════════════════════════════════════════════════════════
+22.  SCREEN SPEC 16 — ADMIN: MODEL REGISTRY
+═════════════════════════════════════════════════════════════════════════════
+
+  - Model families with the current ACTIVE version highlighted.
+  - Per-version: stage, metrics (minority-class first, never headline
+    accuracy), calibration curve, ablation table, baseline comparison,
+    negative findings, model card link, artefact hash.
+  - Promotion flow: propose → second approver → confirm. The proposer cannot
+    approve; the UI shows this rule explicitly rather than failing silently.
+  - Shadow mode toggle with the evaluation window and live comparison stats.
+  - KILL SWITCH: a prominent, always-visible "Demote to previous version"
+    control on the ACTIVE model, requiring one click plus confirmation. In an
+    incident, the person reaching for this is under pressure; it must not be
+    buried three levels deep.
+  - Drift panel: abstention rate, mean max-probability, override rate, and
+    feature PSI over time with alert thresholds marked.
+
+
+═════════════════════════════════════════════════════════════════════════════
+23.  SCREEN SPEC 17 — AUDIT EXPLORER
+═════════════════════════════════════════════════════════════════════════════
+
+  - Filter by actor, action, entity, case, severity, date range.
+  - Hash-chain integrity indicator at the top: "Chain verified through entry
+    #4,182,993 at 03:00 today" with the head hash shown.
+  - Any detected break renders as a full-width CRITICAL banner with the
+    entry id — this is the highest-severity condition in the product.
+  - Signed audit extract export scoped to one case, for handover.
+  - AUDITOR role sees everything read-only across all cases. The UI never
+    offers an edit affordance to this role, rather than offering and denying.
+
+
+═════════════════════════════════════════════════════════════════════════════
+24.  STATE MATRIX — EMPTY / LOADING / ERROR / PARTIAL
+═════════════════════════════════════════════════════════════════════════════
+
+  Every data surface implements all five states. "It works when data exists"
+  is half a feature.
+
+  ┌──────────────────┬───────────────────────────────────────────────────────┐
+  │ State            │ Requirement                                           │
+  ├──────────────────┼───────────────────────────────────────────────────────┤
+  │ EMPTY            │ Explain the area's purpose + one primary action.       │
+  │                  │ Never "No data available."                            │
+  │ LOADING          │ Skeleton matching the final layout, not a spinner on   │
+  │                  │ a blank page. Long ops show real progress (§11.2).     │
+  │ ERROR            │ What failed, whether the user's work is safe, what to  │
+  │                  │ do next, a retry action, and a support reference id.   │
+  │                  │ Never a raw stack trace or an HTTP status alone.       │
+  │ PARTIAL          │ Show what succeeded, name what did not, and say how    │
+  │                  │ that affects conclusions. e.g. "Blockchair did not     │
+  │                  │ respond. 3 transactions are single-source and are      │
+  │                  │ excluded from the primary evidence path."              │
+  │ STALE            │ When displayed data may be outdated (cached, or a      │
+  │                  │ model has since been promoted), a timestamp and a      │
+  │                  │ refresh action are shown.                              │
+  └──────────────────┴───────────────────────────────────────────────────────┘
+
+  PARTIAL IS THE MOST IMPORTANT STATE IN THIS PRODUCT.
+  Multi-source ingestion means partial success is the normal case, not an
+  edge case. A UI that renders partial results as if they were complete is
+  the single most likely way this system produces a wrong legal outcome.
+
+
+═════════════════════════════════════════════════════════════════════════════
+25.  MICROCOPY STANDARDS
+═════════════════════════════════════════════════════════════════════════════
+
+25.1  RESERVED WORDS — defined meanings, used only as defined
+
+  IDENTIFIED     Confidence ≥ action threshold AND terminal entity matched
+                 in the registry. Nothing else may use this word.
+  ATTRIBUTED     A path was found and scored, regardless of threshold.
+  CANDIDATE      Below threshold; requires review.
+  SUSPECT        Applies to an ADDRESS only. Never to a person. There is no
+                 screen in this product that calls a human a suspect.
+  CONFIRMED      Only when a VASP has responded confirming the address.
+  VERIFIED       Only for cryptographic proof verification.
+  LIKELY / PROBABLE — banned. Use the number.
+
+25.2  BANNED PHRASINGS
+  ✗ "Wallet owner identified"        → we identify services, not owners
+  ✗ "100% confidence"                → the meter caps display at 99.9%
+  ✗ "Criminal wallet"                → "address associated with the reported
+                                        incident"
+  ✗ "Proven"                         → "verified" for proofs; nothing else
+  ✗ "AI determined"                  → name the model and its version
+  ✗ "Trace complete" when a budget   → "Trace stopped: time budget reached"
+     terminated the search
+
+25.3  TONE
+  Plain, precise, calm. No exclamation marks anywhere in the product. No
+  congratulatory language on completing a trace — a completed trace is a
+  step in an investigation into someone's financial loss, and the interface
+  should not celebrate it.
+
+25.4  ERROR MESSAGE TEMPLATE
+    [What happened]. [Whether your work is safe]. [What to do next].
+    Example:
+      "The Blockchair data source did not respond. Your trace is saved and
+       3 transactions were verified against Etherscan only. You can retry
+       cross-validation, or continue with those transactions marked as
+       single-source."
+
+25.5  TOOLTIP GLOSSARY (NFR-USE-002)
+  Every technical term has an inline definition on hover AND on focus:
+    UTXO, peel chain, mixing service, bridge, deposit address, hot wallet,
+    confirmation depth, Merkle proof, absorption state, credible interval,
+    branching ratio, cross-validation, abstention.
+  Definitions are written for the primary persona, not for an engineer.
+  Example — Merkle proof: "A short cryptographic receipt that proves this
+  transaction really was included in this block. Anyone can check it without
+  trusting PHANTASM."
+
+
+═════════════════════════════════════════════════════════════════════════════
+26.  ACCESSIBILITY REQUIREMENTS
+═════════════════════════════════════════════════════════════════════════════
+
+  A11Y-01  WCAG 2.1 Level AA across all screens, both themes.
+  A11Y-02  Contrast: 4.5:1 body text, 3:1 large text and UI components.
+           Verified per theme, not assumed from the dark theme's result.
+  A11Y-03  Colour is never the sole encoding (§4.2). Verified by a greyscale
+           screenshot review at every design sign-off.
+  A11Y-04  Full keyboard operability including the graph canvas: Tab enters
+           the canvas, arrow keys move along the path, Enter opens the
+           inspector, Esc exits the canvas focus trap.
+  A11Y-05  Visible focus indicator, 2px, --action-focus-ring, never removed.
+  A11Y-06  Semantic HTML and ARIA: the graph canvas has an accessible
+           description and an adjacent, always-present link to the table view.
+  A11Y-07  Live regions announce trace stage transitions and completion.
+  A11Y-08  Respect prefers-reduced-motion: all transitions reduce to opacity
+           changes; the edge-direction animation is disabled entirely.
+  A11Y-09  Text resizes to 200% without loss of function or content.
+  A11Y-10  No information conveyed by hover alone.
+  A11Y-11  Form errors are associated programmatically with their fields and
+           summarised at the top of the form.
+  A11Y-12  Screen reader testing with NVDA and one mobile reader on the core
+           journey before each release.
+  A11Y-13  Target size minimum 24×24 CSS px, 44×44 for primary actions.
+
+
+═════════════════════════════════════════════════════════════════════════════
+27.  MOTION & FEEDBACK
+═════════════════════════════════════════════════════════════════════════════
+
+  DURATIONS   micro 120ms · standard 200ms · complex 320ms
+  EASING      standard cubic-bezier(.2,0,0,1); decelerate for entrances
+  RULES
+    - Motion communicates causality (this drawer came from that node) or
+      state change. Never decoration.
+    - No animation on the graph canvas during interaction; it competes with
+      the user's own panning and costs frames.
+    - Trace stage transitions animate once, subtly.
+    - Loading skeletons pulse at low amplitude; a high-contrast shimmer is
+      distracting over a long trace.
+    - prefers-reduced-motion is honoured completely (A11Y-08).
+  HAPTICS/SOUND
+    None. This is an office tool used in shared rooms.
+
+
+═════════════════════════════════════════════════════════════════════════════
+28.  RESPONSIVE BEHAVIOUR
+═════════════════════════════════════════════════════════════════════════════
+
+  BREAKPOINTS
+    ≥1600  full three-column, drawer docked open
+    ≥1366  design floor; drawer overlays instead of docking, left panel
+           collapsible to icons
+    ≥1024  two-column; graph canvas full width with panels as overlays
+    ≥768   tablet: single column, graph replaced by the table view as the
+           default representation with an explicit "open graph" action
+    <768   phone: read-only. Case list, case status, trace results as tables,
+           notifications. NO dossier generation, NO signing, NO dispatch on
+           a phone — a legally consequential action requires a proper working
+           context, and this restriction is deliberate rather than a
+           limitation to be lifted later.
+
+  PRINT
+    Dedicated print stylesheet for: hop table, evidence table, dossier
+    preview, case summary. Black on white, all truncated hashes expanded to
+    full length, URLs footnoted, page numbers and case reference on every
+    page. A printed page from PHANTASM should be usable in a case file
+    without editing.
+
+
+═════════════════════════════════════════════════════════════════════════════
+29.  PERFORMANCE BUDGETS
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌────────────────────────────────────┬──────────────────────────────────┐
+  │ Metric                             │ Budget                           │
+  ├────────────────────────────────────┼──────────────────────────────────┤
+  │ Initial JS bundle (gzipped)        │ ≤ 250 KB; graph engine lazy-loaded│
+  │ Time to interactive (dashboard)    │ ≤ 2.5s on 5 Mbps / mid laptop     │
+  │ Route transition                   │ ≤ 300ms perceived                 │
+  │ Interaction response (non-trace)   │ ≤ 200ms                           │
+  │ Graph canvas frame rate            │ ≥ 30 FPS @ 5k nodes / 15k edges   │
+  │ Graph first paint (1k nodes)       │ ≤ 1.5s                            │
+  │ Table virtualisation threshold     │ > 100 rows                        │
+  │ WebSocket reconnect                │ ≤ 5s with visible state           │
+  └────────────────────────────────────┴──────────────────────────────────┘
+
+  The graph engine is code-split and loaded only on the canvas route. An
+  officer opening the dashboard should not pay for WebGL they are not using.
+
+
+═════════════════════════════════════════════════════════════════════════════
+30.  LOCALISATION
+═════════════════════════════════════════════════════════════════════════════
+
+  L10N-01  All UI strings externalised from day one. No literals in JSX.
+  L10N-02  English is the base locale; Hindi and one regional language
+           (Tamil, given the pilot context) for UI and for dossier narrative
+           sections.
+  L10N-03  Statutory text and certificate wording is NOT machine-translated.
+           Legal-cell-supplied translations only, versioned in the template
+           registry. A mistranslated statutory certificate is a live legal
+           risk, not a localisation nicety.
+  L10N-04  Numbers: Indian digit grouping for INR (18,00,000) and
+           international grouping for token amounts. Both formats appear on
+           the same screen and must be visually distinguishable.
+  L10N-05  Dates: DD MMM YYYY with an explicit timezone label. On-chain
+           timestamps are shown in UTC with local time secondary — UTC is
+           the evidentiary time and must not be ambiguous.
+  L10N-06  Addresses, hashes, and case references are never localised.
+  L10N-07  Layout tolerates 40% string expansion without breaking.
+
+
+═════════════════════════════════════════════════════════════════════════════
+31.  UI SECURITY REQUIREMENTS
+═════════════════════════════════════════════════════════════════════════════
+
+  UISEC-01  All external strings (token names, contract metadata, provider
+            fields, VASP names) are escaped and length-bounded on render.
+            Token metadata is attacker-controlled data (PRD SR-008) — a
+            token named with a script payload is a real, cheap attack.
+  UISEC-02  No dangerouslySetInnerHTML anywhere. Lint-enforced.
+  UISEC-03  Strict CSP: no inline scripts, no eval, explicit connect-src.
+  UISEC-04  Permission checks are enforced server-side; the UI hides
+            unauthorised actions as a usability measure and never as the
+            security control.
+  UISEC-05  Session expiry warning; automatic lock on idle with all state
+            preserved behind the lock screen.
+  UISEC-06  Screenshots of case data are outside the product's control, but
+            the UI displays a per-session watermark (user id + timestamp) on
+            evidence-bearing views to deter uncontrolled redistribution.
+  UISEC-07  Clipboard writes of full addresses/hashes are audited events.
+  UISEC-08  Signed URLs for evidence objects expire in ≤5 minutes and are
+            never placed in the browser history or in an href that could be
+            copied and shared.
+  UISEC-09  The MOCK environment chip cannot be hidden by CSS override,
+            user preference, or a URL parameter.
+
+
+═════════════════════════════════════════════════════════════════════════════
+32.  USABILITY VALIDATION PLAN
+═════════════════════════════════════════════════════════════════════════════
+
+  UV-01  MODERATED TASK TEST, ≥5 participants matching the primary persona
+         (no blockchain background), after ≤2 hours of training.
+         Task: complete Journey A end-to-end unaided.
+         Pass criterion: ≥4 of 5 complete without assistance, and none
+         dispatch a below-threshold attribution.
+
+  UV-02  THE CRITICAL-ERROR TEST. Present a 43%-confidence attribution and
+         observe whether the participant notices, and what they do. Any
+         participant who attempts to dispatch it without comment is a
+         design failure, not a training failure.
+
+  UV-03  THE MIXER TEST (Journey B). Present a trace that terminates at a
+         mixer. Success is the participant correctly describing what the
+         system found and what it did not, in their own words.
+
+  UV-04  SUPERVISOR TEST. A legally-literate non-specialist reviews a
+         sign-off screen for 5 minutes and is then asked what could be wrong
+         with the attribution. Success is them naming at least two real
+         limitations from §20's "What could be wrong" section.
+
+  UV-05  GREYSCALE REVIEW at every design sign-off (A11Y-03).
+
+  UV-06  PRINT REVIEW: print the hop table and the dossier; confirm both are
+         usable in a physical case file with no on-screen context.
+
+  UV-07  SLOW-NETWORK TEST at 2 Mbps with 300ms latency; confirm no screen
+         becomes unusable and every long operation shows honest progress.
+
+─────────────────────────────────────────────────────────────────────────────
+                  END OF UI/UX REQUIREMENTS — PHANTASM-UIX-v1.0
+─────────────────────────────────────────────────────────────────────────────

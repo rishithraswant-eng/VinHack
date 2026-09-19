@@ -1,0 +1,47 @@
+{
+  "snapshot_id": "af322936-2274-487e-bfe7-22b7250ba925",
+  "trace_result": {
+    "path": [
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      "0xA06C2B67e7435cE25a5969e49983ec3304D8e787"
+    ],
+    "vasp_node": "0xA06C2B67e7435cE25a5969e49983ec3304D8e787",
+    "hop_count": 1,
+    "algorithm_used": "PPR",
+    "classifier_version": "HGT-v1.0",
+    "confidence_result": {
+      "score": 0.814,
+      "ci_low": 0.7899,
+      "ci_high": 0.8381,
+      "requires_review": false
+    }
+  },
+  "merkle_proofs": [
+    {
+      "tx_hash": "tx_hash_1",
+      "sibling_hashes": [
+        "2cbed7f4ad765184fe3c2f14c2ba62a2d40bbfe95f76a14167578f378f32f449",
+        "0e0561b46afd00854b8c9c3d52c7c24cbdd225ebccb43d8414670f9ff66d6153"
+      ],
+      "is_left_node": [
+        false,
+        false
+      ],
+      "merkle_root": "4aed39b98fbec0ab79391f71072f1c1b1ad1b621d4918f6c55330b683124615e"
+    },
+    {
+      "tx_hash": "tx_hash_2",
+      "sibling_hashes": [
+        "18a4e0a5b6234a002914f3989d841391b6270300fd11d7cef7967b4951112c60",
+        "0e0561b46afd00854b8c9c3d52c7c24cbdd225ebccb43d8414670f9ff66d6153"
+      ],
+      "is_left_node": [
+        true,
+        false
+      ],
+      "merkle_root": "4aed39b98fbec0ab79391f71072f1c1b1ad1b621d4918f6c55330b683124615e"
+    }
+  ],
+  "rng_seed": "static_seed",
+  "sealed_at": "2026-09-06T19:55:41.284477+00:00"
+}
