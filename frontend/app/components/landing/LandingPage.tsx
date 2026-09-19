@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
-import { ChevronDown, ShieldAlert, Sparkles } from 'lucide-react';
+import { ChevronDown, Sparkles } from 'lucide-react';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -132,21 +132,7 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
           autoPlay={false}
         />
 
-        {/* Top Header Branding Overlay */}
-        <div className="absolute top-8 left-8 flex items-center gap-3 pointer-events-none z-20">
-          <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center backdrop-blur-md shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-            <ShieldAlert className="w-5 h-5 text-blue-400" />
-          </div>
-          <div>
-            <div className="text-xl font-extrabold tracking-widest text-white uppercase flex items-center gap-2">
-              PHANTASM
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                PRO-DEFENSE
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 tracking-wider">AI Cryptographic Asset Tracing Engine</p>
-          </div>
-        </div>
+
 
         {/* Scroll down guidance indicator */}
         <div
