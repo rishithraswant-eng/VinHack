@@ -1,20 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import AppShell from "./components/layout/AppShell";
 import CaseWizard from "./components/cases/CaseWizard";
 import CaseWorkspace from "./components/cases/CaseWorkspace";
 
-import { Suspense } from "react";
-
 function HomeContent() {
   const searchParams = useSearchParams();
-  const [activeCase, setActiveCase] = useState<{caseId: string, seedAddress: string} | null>(null);
+  const [activeCase, setActiveCase] = useState<{caseId: string, seedAddress: string, firNumber?: string, ioDesignation?: string} | null>(null);
+  const [currentStep, setCurrentStep] = useState<number>(1);
 
   useEffect(() => {
     const caseId = searchParams?.get('caseId');
-    const seedAddress = searchParams?.get('seedAddress') || 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh'; // fallback for demo if missing
+    const seedAddress = searchParams?.get('seedAddress') || '';
     
     if (caseId) {
       setActiveCase({ caseId, seedAddress });
@@ -22,11 +21,41 @@ function HomeContent() {
   }, [searchParams]);
 
   return (
-    <AppShell>
+    <AppShell 
+      currentStep={currentStep} 
+      onStepChange={(step) => setCurrentStep(step)}
+      activeCase={activeCase}
+    >
       {!activeCase ? (
-        <CaseWizard onComplete={(caseId, seedAddress) => setActiveCase({ caseId, seedAddress })} />
+        <CaseWizard 
+          currentStep={currentStep as 1 | 2 | 3}
+          onStepChange={(step) => setCurrentStep(step)}
+          onComplete={async (caseId, seedAddress, firNumber, ioDesignation) => {
+            try {
+              const res = await fetch('http://localhost:8000/api/v1/cases/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  case_id: caseId,
+                  authority: 'Sec 94 BNSS', // default or pass from wizard if needed
+                  seed_address: seedAddress,
+                  fir_number: firNumber,
+                  io_designation: ioDesignation
+                })
+              });
+              if (!res.ok) console.error("Failed to create case");
+            } catch (err) {
+              console.error("API error", err);
+            }
+            setActiveCase({ caseId, seedAddress, firNumber, ioDesignation });
+            setCurrentStep(4);
+          }} 
+        />
       ) : (
-        <CaseWorkspace caseId={activeCase.caseId} seedAddress={activeCase.seedAddress} />
+        <CaseWorkspace 
+          caseId={activeCase.caseId} 
+          seedAddress={activeCase.seedAddress} 
+        />
       )}
     </AppShell>
   );
@@ -34,7 +63,7 @@ function HomeContent() {
 
 export default function Home() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#0A0F1D] flex items-center justify-center text-white">Loading...</div>}>
+    <Suspense fallback={<div>Loading...</div>}>
       <HomeContent />
     </Suspense>
   );

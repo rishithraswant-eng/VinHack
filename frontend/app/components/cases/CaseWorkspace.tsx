@@ -1,20 +1,47 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Network, FileText, CheckCircle, Activity, Play, ShieldAlert, Cpu, Share2, Lock } from 'lucide-react';
+import { 
+  Network, 
+  FileText, 
+  CheckCircle2, 
+  Activity, 
+  Play, 
+  Cpu, 
+  Share2, 
+  Lock,
+  Download,
+  ShieldCheck,
+  Building,
+  Radio,
+  ExternalLink,
+  Compass
+} from 'lucide-react';
+import BlockchainGraph from './BlockchainGraph';
 
-export default function CaseWorkspace({ caseId, seedAddress }: { caseId: string, seedAddress: string }) {
+export default function CaseWorkspace({ caseId, seedAddress }: { caseId: string; seedAddress: string }) {
   const [traceState, setTraceState] = useState('IDLE');
   const [traceResult, setTraceResult] = useState<any>(null);
   const [caseData, setCaseData] = useState<any>(null);
-  const [logs, setLogs] = useState<{time: string, message: string, type: 'info'|'success'|'warning'}[]>([]);
+  const [logs, setLogs] = useState<{ time: string; message: string; type: 'info' | 'success' | 'warning' }[]>([]);
+
+  // Rotating status phrases for the animated loader
+  const statusPhrases = [
+    "Establishing chain of custody...",
+    "Cross-referencing ledger entries...",
+    "Resolving sub-graphs across hops...",
+    "Validating provenance..."
+  ];
+  const [phraseIndex, setPhraseIndex] = useState(0);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   const detectChain = (address: string) => {
-    if (/^0x[a-fA-F0-9]{40}$/.test(address)) return 'Ethereum';
-    if (/^(1|3)[a-zA-HJ-NP-Z0-9]{25,39}$/.test(address) || /^(bc1)[a-zA-HJ-NP-Z0-9]{25,39}$/.test(address)) return 'Bitcoin';
-    return 'Unknown Chain';
+    if (/^0x[a-fA-F0-9]{40}$/.test(address)) return 'Ethereum (ERC-20)';
+    if (/^(1|3)[a-zA-HJ-NP-Z0-9]{25,39}$/.test(address) || /^(bc1)[a-zA-HJ-NP-Z0-9]{25,39}$/.test(address)) return 'Bitcoin (UTXO)';
+    if (/^T[A-Za-z1-9]{33}$/.test(address)) return 'TRON (TRC-20)';
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return 'Solana (SPL)';
+    return 'Multi-Chain';
   };
 
   useEffect(() => {
@@ -34,8 +61,16 @@ export default function CaseWorkspace({ caseId, seedAddress }: { caseId: string,
     fetchCase();
   }, [caseId]);
 
-  const addLog = (message: string, type: 'info'|'success'|'warning' = 'info') => {
-    const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  // Rotate loader status phrase every 2.2 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPhraseIndex((prev) => (prev + 1) % statusPhrases.length);
+    }, 2200);
+    return () => clearInterval(timer);
+  }, []);
+
+  const addLog = (message: string, type: 'info' | 'success' | 'warning' = 'info') => {
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setLogs(prev => [...prev, { time, message, type }]);
   };
 
@@ -44,7 +79,6 @@ export default function CaseWorkspace({ caseId, seedAddress }: { caseId: string,
     addLog(`Starting ingestion for seed ${seedAddress}...`, 'info');
     
     try {
-      console.log('Calling:', `${API_URL}/api/v1/traces/`);
       const res = await fetch(`${API_URL}/api/v1/traces/`, { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -81,7 +115,7 @@ export default function CaseWorkspace({ caseId, seedAddress }: { caseId: string,
         } else if (data.status === 'FAILED') {
           clearInterval(interval);
           setTraceState('IDLE');
-          addLog("Pipeline failed.", 'warning');
+          addLog("Pipeline execution failed.", 'warning');
         }
       } catch (err) {
         console.error("Polling error", err);
@@ -90,161 +124,208 @@ export default function CaseWorkspace({ caseId, seedAddress }: { caseId: string,
   };
 
   return (
-    <div className="h-full flex flex-col space-y-6">
+    <div className="h-full flex flex-col space-y-5">
       
-      {/* Top Bar / Status */}
-      <div className="bg-phantasm-surface border border-phantasm-border rounded-xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center shadow-lg">
+      {/* Top Header Card */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center shadow-2xs">
         <div>
-          <div className="flex items-center space-x-3 mb-2">
-            <h1 className="text-2xl font-bold text-gray-100">Case: {caseId}</h1>
-            <span className="bg-phantasm-cyan/10 text-phantasm-cyan border border-phantasm-cyan/30 px-3 py-1 rounded-full text-xs font-bold tracking-wide">
+          <div className="flex items-center space-x-3 mb-1.5">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Case: {caseId}</h1>
+            <span className="bg-sky-50 text-[#1B729E] border border-sky-200/80 px-2.5 py-0.5 rounded-md text-xs font-semibold font-mono tracking-wider">
               ACTIVE
             </span>
           </div>
-          <p className="text-gray-400 text-sm flex items-center">
-            <FileText className="w-4 h-4 mr-2" />
-            Authority: <strong className="ml-1 text-gray-200">
-              {caseData ? caseData.authority : "Loading..."}
-            </strong>
+          <p className="text-slate-600 text-xs flex items-center">
+            <FileText className="w-3.5 h-3.5 mr-1.5 text-slate-400" />
+            Authority Mandate: <span className="ml-1 text-slate-800 font-medium">
+              {caseData ? caseData.authority : "Sec 94 BNSS (FIR-Verified)"}
+            </span>
           </p>
         </div>
         
-        <div className="mt-4 md:mt-0 flex flex-col items-end">
-          <div className="flex items-center text-sm font-medium text-green-400 mb-1">
-            <CheckCircle className="w-4 h-4 mr-1.5" />
+        <div className="mt-3 md:mt-0 flex flex-col md:items-end">
+          <div className="flex items-center text-xs font-semibold text-emerald-700 mb-1">
+            <CheckCircle2 className="w-4 h-4 mr-1 text-emerald-600" />
             Lawful Status Verified
           </div>
-          <p className="text-xs text-gray-500 font-mono">
-            Seed: {seedAddress}
-          </p>
+          <div className="text-xs text-slate-600 font-mono bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+            Seed: <span className="text-slate-900 font-semibold">{seedAddress}</span>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Main Graph & Sidebar Grid */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-5">
         
-        {/* Graph Preview */}
-        <div className="lg:col-span-2 bg-phantasm-surface border border-phantasm-border rounded-xl shadow-lg relative overflow-hidden flex flex-col">
-          <div className="bg-phantasm-border/30 px-4 py-3 border-b border-phantasm-border flex items-center justify-between">
-            <div className="flex items-center">
-              <Network className="w-5 h-5 text-gray-400 mr-2" />
-              <h2 className="text-sm font-semibold text-gray-200">Graph Resolution Engine</h2>
+        {/* Graph Preview Canvas */}
+        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-2xs relative overflow-hidden flex flex-col min-h-[540px] lg:min-h-[580px]">
+          
+          {/* Canvas Window Header */}
+          <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <Network className="w-4 h-4 text-[#1B729E]" />
+              <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Graph Resolution Engine</h2>
+              {traceState === 'COMPLETED' && (
+                <span className="bg-emerald-50 text-emerald-700 border border-emerald-200/80 px-2 py-0.5 rounded text-[10px] font-mono font-semibold flex items-center">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+                  3-HOP ATTR PATH ACTIVE
+                </span>
+              )}
             </div>
-            <div className="flex space-x-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-green-500"></span>
+            <div className="flex items-center space-x-2">
+              {traceState === 'COMPLETED' && (
+                <span className="text-[11px] font-mono text-slate-500 font-medium hidden sm:inline">
+                  Destination: <span className="text-slate-800 font-bold">{traceResult?.vasp_node || 'vasp_exchange_dynamic'}</span>
+                </span>
+              )}
+              <div className="flex items-center space-x-1.5 pl-2">
+                <span className="w-2 h-2 rounded-full bg-slate-300"></span>
+                <span className="w-2 h-2 rounded-full bg-slate-300"></span>
+                <span className="w-2 h-2 rounded-full bg-slate-300"></span>
+              </div>
             </div>
           </div>
           
-          <div className="flex-1 flex items-center justify-center bg-[#050810] relative">
-            <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAwIDEwIEwgNDAgMTAgTSAxMCAwIEwgMTAgNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgzMCwgNDUsIDc0LCAwLjIpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-50"></div>
-            
-            <div className="text-center z-10 p-8">
-              {traceState === 'IDLE' && (
-                <>
-                  <Activity className="w-12 h-12 text-phantasm-cyan/50 mx-auto mb-4 animate-pulse" />
-                  <p className="text-gray-400 text-sm max-w-md mx-auto">
-                    The engine is idle. Run an initial ingestion on the seed address to begin populating the Neo4j graph.
-                  </p>
-                </>
-              )}
-              {['INGESTING', 'CLASSIFYING', 'ATTRIBUTING', 'SEALING', 'PENDING'].includes(traceState) && (
-                <>
-                  <div className="w-16 h-16 border-4 border-phantasm-cyan border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
-                  <h3 className="text-phantasm-cyan font-bold text-xl tracking-widest mb-2 animate-pulse">{traceState}...</h3>
-                  <p className="text-gray-400 text-sm">Processing graph analytics via AI Pipeline</p>
-                </>
-              )}
-              {traceState === 'COMPLETED' && traceResult && (
-                <div className="bg-[#0A0F1D]/80 border border-phantasm-cyan/30 rounded-xl p-6 inline-block text-left backdrop-blur-sm">
-                  <h3 className="text-green-400 font-bold mb-4 flex items-center">
-                    <CheckCircle className="w-5 h-5 mr-2" /> Trace Completed Successfully
-                  </h3>
-                  <div className="space-y-3">
-                    <p className="text-sm text-gray-300">Target identified at VASP:</p>
-                    <p className="text-xl font-mono text-white bg-gray-800 p-2 rounded">{traceResult.vasp_node || 'Unknown'}</p>
-                    <div className="flex justify-between items-center mt-4 border-t border-gray-700 pt-4">
-                      <span className="text-sm text-gray-400">Confidence Score:</span>
-                      <span className="text-phantasm-amber font-bold">{traceResult.confidence ? (traceResult.confidence * 100).toFixed(1) : 0}%</span>
+          {/* Canvas Body */}
+          <div className="flex-1 flex flex-col relative overflow-hidden bg-[#F8FAFC]">
+            {traceState === 'COMPLETED' ? (
+              <BlockchainGraph 
+                caseId={caseId} 
+                seedAddress={seedAddress} 
+                traceResult={traceResult} 
+                traceState={traceState} 
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center p-8 [background-image:radial-gradient(#CBD5E1_1px,transparent_1px)] [background-size:20px_20px]">
+                <div className="relative z-20 bg-white/95 backdrop-blur-sm border-2 border-[#1B4B5A]/30 rounded-2xl p-6 sm:p-8 max-w-md text-center shadow-xl my-auto">
+                  <div className="space-y-5">
+                    {/* Rotating Compass / Seal Icon Header */}
+                    <div className="relative w-16 h-16 mx-auto flex items-center justify-center">
+                      <Compass className="w-16 h-16 text-[#1B4B5A] animate-[spin_3s_linear_infinite] opacity-90" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-4 h-4 rounded-full bg-[#1B4B5A]"></div>
+                      </div>
                     </div>
+
+                    <div>
+                      {/* Cycling Investigative Phrase */}
+                      <div className="h-7 overflow-hidden relative">
+                        <p 
+                          key={phraseIndex} 
+                          className="font-serif text-base font-bold text-[#1B4B5A] tracking-wide transition-all duration-500 animate-pulse"
+                        >
+                          {statusPhrases[phraseIndex]}
+                        </p>
+                      </div>
+                      <p className="text-xs text-[#4A5A62] font-mono mt-1">
+                        {['INGESTING', 'CLASSIFYING', 'ATTRIBUTING', 'SEALING', 'PENDING'].includes(traceState) ? `PIPELINE PHASE: ${traceState}` : 'Awaiting manual ingestion trigger or auto-analysis...'}
+                      </p>
+                    </div>
+
+                    {/* Thin Animated Teal Progress Bar */}
+                    <div className="w-full bg-[#EAE6DF] h-1.5 rounded-full overflow-hidden border border-[#C7D3D6]">
+                      <div className={`h-full bg-[#1B4B5A] rounded-full transition-all duration-700 ${['INGESTING', 'CLASSIFYING', 'ATTRIBUTING', 'SEALING', 'PENDING'].includes(traceState) ? 'w-3/4 animate-pulse' : 'w-1/3'}`}></div>
+                    </div>
+
+                    {/* CTA Button to start ingestion */}
+                    {traceState === 'IDLE' && (
+                      <button
+                        onClick={startTrace}
+                        className="w-full bg-[#1B4B5A] hover:bg-[#153B47] text-white font-bold py-3 px-6 rounded-md text-xs uppercase tracking-[0.18em] transition-all shadow-md flex items-center justify-center space-x-2 group"
+                      >
+                        <Play className="w-4 h-4 text-[#D9C9A8] fill-current" />
+                        <span>START INK-TRACE INGESTION</span>
+                      </button>
+                    )}
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Guided NEXT STEP Card */}
-        <div className="flex flex-col space-y-6">
-          <div className="bg-gradient-to-b from-phantasm-surface to-[#0A0F1D] border border-phantasm-cyan/30 rounded-xl shadow-[0_0_20px_rgba(0,229,255,0.1)] p-6">
-            <h3 className="text-phantasm-cyan font-bold tracking-wider text-sm mb-4">NEXT STEP</h3>
+        {/* Guided NEXT STEP & Activity Log Side Column */}
+        <div className="flex flex-col space-y-5">
+          
+          {/* Action Step Card */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-bold text-[#1B729E] uppercase tracking-wider font-mono">NEXT ACTION</span>
+              <span className="text-[10px] text-slate-400 font-mono">PHASE 04</span>
+            </div>
             
             {traceState === 'IDLE' ? (
               <>
-                <h4 className="text-lg font-semibold text-gray-100 mb-2">Ingest Seed Activity</h4>
-                <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-                  Fetch the complete transaction history for the seed address using the configured providers and cross-validation gate.
+                <h4 className="text-sm font-bold text-slate-900 mb-1">Execute Ingestion Pipeline</h4>
+                <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+                  Fetch live on-chain UTXO / account transaction ledger data and expand the multigraph entity tree.
                 </p>
                 <button 
                   onClick={startTrace}
-                  className="w-full bg-phantasm-cyan text-[#0A0F1D] font-bold py-3 rounded-lg flex items-center justify-center hover:bg-opacity-90 transition-all shadow-[0_0_10px_rgba(0,229,255,0.4)] group"
+                  className="w-full bg-[#1B729E] hover:bg-[#155E82] text-white font-semibold text-xs py-2.5 rounded-lg flex items-center justify-center transition-all shadow-xs"
                 >
-                  <Play className="w-4 h-4 mr-2 fill-current" />
+                  <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />
                   START INGESTION
                 </button>
               </>
             ) : traceState === 'COMPLETED' ? (
               <>
-                <h4 className="text-lg font-semibold text-gray-100 mb-2">View Dossier</h4>
-                <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-                  The evidence has been sealed with Merkle proofs. You can now download the generated forensic dossier.
+                <h4 className="text-sm font-bold text-slate-900 mb-1">Generate Legal Dossier</h4>
+                <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+                  The evidence has been sealed with cryptographic Merkle proof bundles. Download the court-ready forensic PDF.
                 </p>
                 <button 
                   onClick={() => {
                     if (traceResult?.dossier_url) {
                       window.open(traceResult.dossier_url, '_blank');
+                    } else {
+                      window.open(`${API_URL}/api/v1/dossiers/generate/${caseId}`, '_blank');
                     }
                   }}
-                  className="w-full bg-green-500 text-white font-bold py-3 rounded-lg flex items-center justify-center hover:bg-opacity-90 transition-all shadow-[0_0_10px_rgba(34,197,94,0.4)]"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2.5 rounded-lg flex items-center justify-center transition-all shadow-xs"
                 >
-                  <FileText className="w-4 h-4 mr-2" />
-                  DOWNLOAD PDF
+                  <Download className="w-3.5 h-3.5 mr-1.5" />
+                  DOWNLOAD FORENSIC DOSSIER (PDF)
                 </button>
               </>
             ) : (
-              <div className="space-y-4">
-                <div className={`flex items-center p-2 rounded ${['INGESTING', 'PENDING'].includes(traceState) ? 'bg-phantasm-cyan/20 text-phantasm-cyan border border-phantasm-cyan/50' : 'text-gray-500'}`}>
-                  <Network className="w-4 h-4 mr-3" /> Ingesting Data
+              <div className="space-y-2">
+                <div className={`flex items-center text-xs p-2 rounded-lg font-medium ${['INGESTING', 'PENDING'].includes(traceState) ? 'bg-sky-50 text-[#1B729E] border border-sky-200' : 'text-slate-400'}`}>
+                  <Network className="w-3.5 h-3.5 mr-2" /> Ingesting Ledger Transactions
                 </div>
-                <div className={`flex items-center p-2 rounded ${traceState === 'CLASSIFYING' ? 'bg-phantasm-cyan/20 text-phantasm-cyan border border-phantasm-cyan/50' : 'text-gray-500'}`}>
-                  <Cpu className="w-4 h-4 mr-3" /> Classifying Nodes
+                <div className={`flex items-center text-xs p-2 rounded-lg font-medium ${traceState === 'CLASSIFYING' ? 'bg-sky-50 text-[#1B729E] border border-sky-200' : 'text-slate-400'}`}>
+                  <Cpu className="w-3.5 h-3.5 mr-2" /> Classifying Cluster Nodes
                 </div>
-                <div className={`flex items-center p-2 rounded ${traceState === 'ATTRIBUTING' ? 'bg-phantasm-cyan/20 text-phantasm-cyan border border-phantasm-cyan/50' : 'text-gray-500'}`}>
-                  <Share2 className="w-4 h-4 mr-3" /> Attributing Paths
+                <div className={`flex items-center text-xs p-2 rounded-lg font-medium ${traceState === 'ATTRIBUTING' ? 'bg-sky-50 text-[#1B729E] border border-sky-200' : 'text-slate-400'}`}>
+                  <Share2 className="w-3.5 h-3.5 mr-2" /> Attributing Entity Paths
                 </div>
-                <div className={`flex items-center p-2 rounded ${traceState === 'SEALING' ? 'bg-phantasm-cyan/20 text-phantasm-cyan border border-phantasm-cyan/50' : 'text-gray-500'}`}>
-                  <Lock className="w-4 h-4 mr-3" /> Sealing Evidence
+                <div className={`flex items-center text-xs p-2 rounded-lg font-medium ${traceState === 'SEALING' ? 'bg-sky-50 text-[#1B729E] border border-sky-200' : 'text-slate-400'}`}>
+                  <Lock className="w-3.5 h-3.5 mr-2" /> Cryptographic Merkle Sealing
                 </div>
               </div>
             )}
           </div>
           
-          {/* Recent Activity Log */}
-          <div className="bg-phantasm-surface border border-phantasm-border rounded-xl p-5 flex-1">
-            <h3 className="text-gray-400 font-semibold text-sm mb-4">Activity Log</h3>
-            <div className="space-y-3 max-h-64 overflow-y-auto">
+          {/* Activity Log */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 flex-1 shadow-2xs flex flex-col">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Activity Log</h3>
+              <span className="text-[10px] text-slate-400 font-mono">LIVE EVENTS</span>
+            </div>
+
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1 flex-1">
               {logs.map((log, i) => (
-                <div key={i} className={`border-l-2 pl-3 py-1 ${
-                  log.type === 'success' ? 'border-green-500' : 
-                  log.type === 'warning' ? 'border-red-500' : 
-                  'border-phantasm-amber'
+                <div key={i} className={`text-xs pl-2.5 py-1.5 rounded-r-md border-l-2 ${
+                  log.type === 'success' ? 'border-emerald-500 bg-emerald-50/50 text-emerald-900' : 
+                  log.type === 'warning' ? 'border-amber-500 bg-amber-50/50 text-amber-900' : 
+                  'border-[#1B729E] bg-sky-50/40 text-slate-800'
                 }`}>
-                  <p className="text-xs text-gray-500 mb-0.5">{log.time}</p>
-                  <p className="text-sm text-gray-200">{log.message}</p>
+                  <div className="text-[10px] font-mono text-slate-400 mb-0.5">{log.time}</div>
+                  <div className="font-medium leading-relaxed">{log.message}</div>
                 </div>
               ))}
               {logs.length === 0 && (
-                <p className="text-sm text-gray-500 italic">No activity yet...</p>
+                <p className="text-xs text-slate-400 italic py-2">No activity recorded yet...</p>
               )}
             </div>
           </div>

@@ -1,24 +1,36 @@
 @import "tailwindcss";
 
 @theme {
-  --color-phantasm-bg: #0A0F1D;
-  --color-phantasm-surface: #111A2E;
-  --color-phantasm-border: #1E2D4A;
-  --color-phantasm-cyan: #00E5FF;
-  --color-phantasm-amber: #FFB300;
+  --color-phantasm-bg: #F8FAFC;
+  --color-phantasm-surface: #FFFFFF;
+  --color-phantasm-border: #E2E8F0;
+  --color-phantasm-cyan: #1B729E;
+  --color-phantasm-amber: #64748B;
+  --color-phantasm-slate: #94A3B8;
+  --color-phantasm-ocean: #1B729E;
+  --color-phantasm-frost: #F1F5F9;
+  --font-serif: var(--font-display), "Playfair Display", Georgia, serif;
 }
 
 @layer base {
   :root {
-    --bg: #0A0F1D;
-    --surface: #111A2E;
-    --border: #1E2D4A;
-    --cyan: #00E5FF;
-    --amber: #FFB300;
+    --bg: #F8FAFC;
+    --surface: #FFFFFF;
+    --border: #E2E8F0;
+    --ocean: #1B729E;
+    --slate-blue: #64748B;
+    --steel: #94A3B8;
+    --frost: #F1F5F9;
   }
   
   body {
-    background-color: var(--bg);
-    color: white;
+    background-color: #F8FAFC;
+    color: #0F172A;
+    font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .font-display {
+    font-family: var(--font-display), "Playfair Display", Georgia, serif;
   }
 }
