@@ -88,10 +88,10 @@ class DossierGenerator:
             chain = "Bitcoin (UTXO)"
             
         try:
-            dt = datetime.datetime.fromisoformat(evidence.sealed_at.replace("Z", "+00:00"))
+            dt = datetime.datetime.fromisoformat(evidence.sealed_at)
             ist = dt + timedelta(hours=5, minutes=30)
             sealed_str = f"{dt.strftime('%Y-%m-%d %H:%M:%S')} UTC ({ist.strftime('%H:%M:%S')} IST)"
-        except:
+        except Exception:
             sealed_str = evidence.sealed_at
 
         # Metadata
@@ -234,7 +234,7 @@ class DossierGenerator:
         try:
             with open(ev_file, "rb") as f:
                 ev_hash = hashlib.sha256(f.read()).hexdigest()
-        except:
+        except Exception:
             pass
             
         elements.append(Paragraph(f"SHA-256 Digest of Evidence File: {ev_hash}", mono_style_crypt))
