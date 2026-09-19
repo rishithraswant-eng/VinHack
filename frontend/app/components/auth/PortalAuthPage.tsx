@@ -102,13 +102,13 @@ export default function PortalAuthPage({
         </div>
 
         {/* Dual Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch max-w-5xl mx-auto w-full">
           
           {/* Card 1: Citizen / Public Gateway */}
-          <div className="bg-white border border-slate-200 hover:border-[#1B729E]/60 rounded-2xl p-7 sm:p-8 flex flex-col justify-between shadow-xs hover:shadow-md transition-all duration-200 group relative">
-            <div>
+          <div className="bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-7 sm:p-8 flex flex-col justify-between shadow-xs transition-all duration-200">
+            <div className="flex flex-col flex-1 justify-between">
               {/* Title & Icon */}
-              <div className="flex items-start space-x-4 mb-4">
+              <div className="flex items-start space-x-4 mb-5">
                 <div className="w-12 h-12 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#1B729E] shrink-0 shadow-xs">
                   <User className="w-6 h-6" />
                 </div>
@@ -123,7 +123,7 @@ export default function PortalAuthPage({
               </div>
 
               {/* Features List */}
-              <div className="space-y-3 py-4 border-t border-slate-100 my-4 text-xs text-slate-700">
+              <div className="space-y-3.5 my-auto py-2 text-xs text-slate-700">
                 <div className="flex items-start space-x-2.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   <span>
@@ -146,11 +146,11 @@ export default function PortalAuthPage({
             </div>
 
             {/* CTA Button */}
-            <div className="pt-4 border-t border-slate-100">
+            <div className="pt-6 mt-auto">
               <button
                 type="button"
                 onClick={onSelectCitizen}
-                className="w-full py-3.5 px-6 rounded-xl bg-[#1B729E] hover:bg-[#155E82] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-xs transition hover:scale-[1.01] cursor-pointer"
+                className="w-full py-3.5 px-6 rounded-xl bg-[#1B729E] hover:bg-[#155E82] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-xs transition hover:scale-[1.005] cursor-pointer"
               >
                 <span>Continue as Normal Citizen</span>
                 <ArrowRight className="w-4 h-4" />
@@ -162,10 +162,10 @@ export default function PortalAuthPage({
           </div>
 
           {/* Card 2: Law Enforcement Agency (LEA) Portal */}
-          <div className="bg-white border border-slate-200 hover:border-indigo-400/80 rounded-2xl p-7 sm:p-8 flex flex-col justify-between shadow-xs hover:shadow-md transition-all duration-200 group relative">
-            <div>
+          <div className="bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-7 sm:p-8 flex flex-col justify-between shadow-xs transition-all duration-200">
+            <div className="flex flex-col flex-1 justify-between">
               {/* Title & Icon */}
-              <div className="flex items-start space-x-4 mb-4">
+              <div className="flex items-start space-x-4 mb-5">
                 <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 shrink-0 shadow-xs">
                   <Scale className="w-6 h-6" />
                 </div>
@@ -180,7 +180,7 @@ export default function PortalAuthPage({
               </div>
 
               {/* Officer Form */}
-              <form onSubmit={handleLeaSubmit} className="space-y-3 pt-3 text-xs">
+              <form id="lea-auth-form" onSubmit={handleLeaSubmit} className="space-y-3 my-auto py-2 text-xs">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
@@ -190,7 +190,7 @@ export default function PortalAuthPage({
                       type="text" 
                       value={officerName}
                       onChange={(e) => setOfficerName(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 outline-none focus:bg-white focus:border-[#1B729E] focus:ring-2 focus:ring-sky-100 text-xs transition"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50/60 border border-slate-200 text-slate-900 outline-none focus:bg-white focus:border-[#1B729E] focus:ring-2 focus:ring-sky-100 text-xs transition"
                       placeholder="e.g. Inspector A. Sharma"
                     />
                   </div>
@@ -202,8 +202,8 @@ export default function PortalAuthPage({
                       type="text" 
                       value={badgeNumber}
                       onChange={(e) => setBadgeNumber(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 font-mono outline-none focus:bg-white focus:border-[#1B729E] focus:ring-2 focus:ring-sky-100 text-xs transition"
-                      placeholder="e.g. SHM-8891"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50/60 border border-slate-200 text-slate-900 font-mono outline-none focus:bg-white focus:border-[#1B729E] focus:ring-2 focus:ring-sky-100 text-xs transition"
+                      placeholder="e.g.  SHM-8891"
                     />
                   </div>
                 </div>
@@ -216,25 +216,26 @@ export default function PortalAuthPage({
                     type="text" 
                     value={policeStation}
                     onChange={(e) => setPoliceStation(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 outline-none focus:bg-white focus:border-[#1B729E] focus:ring-2 focus:ring-sky-100 text-xs transition"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50/60 border border-slate-200 text-slate-900 outline-none focus:bg-white focus:border-[#1B729E] focus:ring-2 focus:ring-sky-100 text-xs transition"
                     placeholder="e.g. Cyber Crime Cell, New Delhi"
                   />
                 </div>
-
-                {/* Submit Action */}
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-indigo-700 to-[#1B729E] hover:from-indigo-800 hover:to-[#155E82] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-xs transition hover:scale-[1.01] cursor-pointer"
-                  >
-                    <span>Authenticate & Open LEA Suite</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                  <p className="text-[11px] text-center text-slate-400 mt-2.5">
-                    Unlocks 3-Stage Case Setup (Statutory Mandate, FIR, IO Seal)
-                  </p>
-                </div>
               </form>
+            </div>
+
+            {/* Submit Action */}
+            <div className="pt-6 mt-auto">
+              <button
+                form="lea-auth-form"
+                type="submit"
+                className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-indigo-700 to-[#1B729E] hover:from-indigo-800 hover:to-[#155E82] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-xs transition hover:scale-[1.005] cursor-pointer"
+              >
+                <span>Authenticate & Open LEA Suite</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <p className="text-[11px] text-center text-slate-400 mt-2.5">
+                Unlocks 3-Stage Case Setup (Statutory Mandate, FIR, IO Seal)
+              </p>
             </div>
           </div>
         </div>
