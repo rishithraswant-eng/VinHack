@@ -6,7 +6,9 @@ import AppShell from "./components/layout/AppShell";
 import CaseWizard from "./components/cases/CaseWizard";
 import CaseWorkspace from "./components/cases/CaseWorkspace";
 
-export default function Home() {
+import { Suspense } from "react";
+
+function HomeContent() {
   const searchParams = useSearchParams();
   const [activeCase, setActiveCase] = useState<{caseId: string, seedAddress: string} | null>(null);
 
@@ -27,5 +29,13 @@ export default function Home() {
         <CaseWorkspace caseId={activeCase.caseId} seedAddress={activeCase.seedAddress} />
       )}
     </AppShell>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0A0F1D] flex items-center justify-center text-white">Loading...</div>}>
+      <HomeContent />
+    </Suspense>
   );
 }
