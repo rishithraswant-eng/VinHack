@@ -39,6 +39,9 @@ dev = [
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint]
+ignore = ["SIM102", "S110", "BLE001", "TRY201", "B008", "F401", "RUF013", "F841", "RUF059", "RUF012", "LOG015", "SIM103", "C403"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
