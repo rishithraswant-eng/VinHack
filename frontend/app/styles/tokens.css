@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme {
+  --color-phantasm-bg: #0A0F1D;
+  --color-phantasm-surface: #111A2E;
+  --color-phantasm-border: #1E2D4A;
+  --color-phantasm-cyan: #00E5FF;
+  --color-phantasm-amber: #FFB300;
+}
+
+@layer base {
+  :root {
+    --bg: #0A0F1D;
+    --surface: #111A2E;
+    --border: #1E2D4A;
+    --cyan: #00E5FF;
+    --amber: #FFB300;
+  }
+  
+  body {
+    background-color: var(--bg);
+    color: white;
+  }
+}
