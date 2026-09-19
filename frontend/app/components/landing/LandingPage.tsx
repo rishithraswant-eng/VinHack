@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
-import { ChevronDown, Sparkles } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -157,8 +157,7 @@ export default function LandingPage({ onLaunch }: { onLaunch: () => void }) {
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.35),transparent_70%)]" />
             <div className="absolute inset-[1px] rounded-full bg-slate-950/40 backdrop-blur-md -z-0" />
             
-            <span className="relative z-10 flex items-center gap-3">
-              <Sparkles className="w-5 h-5 text-cyan-300 animate-pulse" />
+            <span className="relative z-10 flex items-center justify-center">
               Launch Forensic Suite
             </span>
           </button>
