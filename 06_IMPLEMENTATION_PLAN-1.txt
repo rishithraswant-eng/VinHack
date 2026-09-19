@@ -1,0 +1,1187 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  PHANTASM — IMPLEMENTATION PLAN                                              ║
+║  Five-Phase Delivery · Workstreams · Exit Criteria · Hackathon Compression   ║
+║                                                                              ║
+║  Document ID    : PHANTASM-IMP-v1.0                                          ║
+║  Classification : RESTRICTED — LEA USE                                       ║
+║  Depends on     : PHANTASM-PRD-v1.0, PHANTASM-DBS-v1.0,                      ║
+║                   PHANTASM-UIX-v1.0, PHANTASM-TCF-v1.0, PHANTASM-DSF-v1.0    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+TABLE OF CONTENTS
+─────────────────────────────────────────────────────────────────────────────
+  0.  HOW TO READ THIS PLAN
+  1.  DELIVERY STRATEGY & PHASE MAP
+  2.  WHAT IS DEMONSTRABLE VS WHAT IS ROADMAP  (read this before pitching)
+  3.  TEAM MODEL & ROLE ALLOCATION
+  4.  ENGINEERING STANDARDS APPLIED FROM DAY ONE
+  5.  PHASE 1 — FOUNDATION
+  6.  PHASE 2 — INTELLIGENCE CORE
+  7.  PHASE 3 — ATTRIBUTION ENGINE
+  8.  PHASE 4 — EVIDENCE & LEGAL PIPELINE
+  9.  PHASE 5 — HARDENING, SCALE & PILOT READINESS
+ 10.  THE 7-DAY HACKATHON COMPRESSION
+ 11.  DEMO SCRIPT & JUDGING EVIDENCE PACK
+ 12.  CROSS-PHASE TEST STRATEGY
+ 13.  ENVIRONMENTS, CI/CD & RELEASE MECHANICS
+ 14.  RISK-BURNDOWN SCHEDULE
+ 15.  DEPENDENCY & PROCUREMENT REGISTER
+ 16.  DEFINITION OF DONE — PER PHASE AND PER TASK
+ 17.  POST-PILOT ROADMAP (beyond v1)
+ 18.  APPENDIX — TASK ID INDEX
+
+
+═════════════════════════════════════════════════════════════════════════════
+0.  HOW TO READ THIS PLAN
+═════════════════════════════════════════════════════════════════════════════
+
+  TASK ID SCHEME
+    T<phase>.<workstream>.<seq>       e.g. T1.ING.03
+    Workstream codes match the PRD module codes:
+      ING GRF TPP CLS ATT CNF EVD SHY CAS UIX ADM OBS MLP PLT(platform)
+
+  EFFORT UNITS
+    Effort is expressed in ENGINEER-DAYS (ED) for a competent engineer
+    already familiar with the stack. These are planning estimates for
+    sequencing and dependency reasoning, not commitments. They are
+    deliberately not converted into calendar dates, because calendar dates
+    for a team whose size is not yet fixed would be fiction.
+
+  PRIORITY
+    P0 required for the SIH prototype demo
+    P1 required for a credible pilot
+    P2 production hardening
+    P3 post-v1
+
+  PHASE GATE
+    A phase does not close because its tasks are done. It closes when its
+    EXIT CRITERIA pass, verified by the named verification method. A task
+    list is a plan; an exit criterion is a fact.
+
+
+═════════════════════════════════════════════════════════════════════════════
+1.  DELIVERY STRATEGY & PHASE MAP
+═════════════════════════════════════════════════════════════════════════════
+
+1.1  THE STRATEGY IN ONE PARAGRAPH
+
+  Build the evidentiary spine first and the intelligence on top of it. Most
+  teams building this product would start with the GNN because it is the
+  interesting part. That ordering produces a clever classifier with nowhere
+  trustworthy to put its output. PHANTASM instead builds ingestion,
+  cross-validation, canonical storage and the chain-adapter abstraction
+  first, so that every model output from Phase 2 onward lands in a store
+  that already knows its provenance, its finality status, and its version.
+
+1.2  PHASE MAP
+
+  ┌───────┬──────────────────────┬──────────────────────────────────────────┐
+  │ Phase │ Name                 │ The question it answers                  │
+  ├───────┼──────────────────────┼──────────────────────────────────────────┤
+  │  1    │ Foundation           │ Can we get trustworthy multi-chain data   │
+  │       │                      │ into a canonical, provenance-aware store? │
+  │  2    │ Intelligence Core    │ Can we tell what an unlabelled wallet is, │
+  │       │                      │ and separate laundering noise from money? │
+  │  3    │ Attribution Engine   │ Can we find the nearest custodial hop and │
+  │       │                      │ say honestly how sure we are?             │
+  │  4    │ Evidence & Legal     │ Can a court verify it and can an officer  │
+  │       │                      │ act on it lawfully?                       │
+  │  5    │ Hardening & Scale    │ Can it be deployed, defended and operated │
+  │       │                      │ by an agency?                             │
+  └───────┴──────────────────────┴──────────────────────────────────────────┘
+
+1.3  DEPENDENCY GRAPH BETWEEN PHASES
+
+    Phase 1 ─────────────▶ Phase 2 ─────────────▶ Phase 3
+       │                      │                      │
+       │                      └──────────┬───────────┘
+       │                                 ▼
+       └──────────────────────────▶  Phase 4  ──────▶ Phase 5
+
+  Phase 4 depends on Phase 1 (canonical facts, finality, provenance) and on
+  Phase 3 (a scored path to seal), but NOT on Phase 2's model quality — the
+  evidence pipeline is model-agnostic by design. This is deliberate: it means
+  Phase 4 can be built in parallel with Phase 2 by a second engineer, and it
+  means a model regression never breaks the evidentiary machinery.
+
+1.4  PARALLELISATION OPPORTUNITIES
+
+  ┌──────────────────────────────┬───────────────────────────────────────────┐
+  │ Can run in parallel          │ Why it is safe                            │
+  ├──────────────────────────────┼───────────────────────────────────────────┤
+  │ P1 ingestion ∥ P1 UI shell   │ Contract-first: the API schema is agreed  │
+  │                              │ before either side is built.              │
+  │ P2 models ∥ P4 evidence      │ Evidence pipeline is model-agnostic.      │
+  │ P3 search ∥ P4 dossier tmpl. │ Template needs the schema, not the result.│
+  │ P5 security ∥ everything     │ Threat modelling starts in Phase 1.       │
+  └──────────────────────────────┴───────────────────────────────────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+2.  WHAT IS DEMONSTRABLE VS WHAT IS ROADMAP
+═════════════════════════════════════════════════════════════════════════════
+
+  This section exists because PRD constraint C1 requires it and because
+  overclaiming is the fastest way to lose credibility with a technical panel.
+
+  ┌────────────────────────────────────┬───────────────────────────────────┐
+  │ DEMONSTRABLE AT SIH (Phases 1–3    │ ROADMAP, PRESENTED AS ROADMAP     │
+  │ plus the Phase-4 evidence core)    │ (rest of Phase 4, all of Phase 5) │
+  ├────────────────────────────────────┼───────────────────────────────────┤
+  │ Multi-chain ingestion, ≥2 chains   │ All six chains at production      │
+  │ (one UTXO + one account)           │ fidelity                          │
+  │ Cross-validation across ≥2         │ Full provider health scoring and  │
+  │ providers with conflict surfacing  │ automatic demotion                │
+  │ Confirmation-depth finality gate   │ Scheduled reorg re-validation job │
+  │ Hawkes temporal pruning            │ Neural Hawkes variant + tuning    │
+  │ HGT/R-GCN classification on        │ Production fine-tuning on         │
+  │ Elliptic with measured metrics     │ FIU-IND labelled data             │
+  │ Absorption-state path search       │ Cross-chain bridge traversal at   │
+  │ with termination reasons           │ full fidelity                     │
+  │ Monte Carlo confidence + interval  │ Calibration on resolved real cases│
+  │ Merkle proof construction and      │ HSM-backed signing                │
+  │ LIVE independent verification      │                                   │
+  │ Dossier generation with the        │ Legal-cell-reviewed statutory     │
+  │ mandatory limitations section      │ templates                         │
+  │ SAHYOG MOCK connector, labelled    │ Real SAHYOG integration           │
+  │ Honest mixer termination (Journey B)│ Full MLAT packet generation      │
+  └────────────────────────────────────┴───────────────────────────────────┘
+
+  THE RULE FOR THE PITCH
+    Every claim made on stage must be either demonstrated live or explicitly
+    labelled "roadmap". There is no third category. A judge who catches one
+    overclaim will discount everything else, and this project's entire
+    differentiation is that it is honest about what it cannot do.
+
+
+═════════════════════════════════════════════════════════════════════════════
+3.  TEAM MODEL & ROLE ALLOCATION
+═════════════════════════════════════════════════════════════════════════════
+
+3.1  ROLES (a 6-person SIH team maps naturally onto these)
+
+  R1  BACKEND / DATA ENGINEER
+      Chain adapters, ingestion, cross-validation, canonical store,
+      partitioning, Celery topology.
+  R2  GRAPH ENGINEER
+      Neo4j modelling, sharding, Cypher library, traversal, PPR, Dijkstra,
+      bridge stitching.
+  R3  ML ENGINEER
+      Hawkes, HGT/R-GCN/TGN, calibration, evaluation harness, model registry.
+  R4  FRONTEND ENGINEER
+      React/Next.js shell, graph canvas, confidence components, all screens.
+  R5  EVIDENCE / SECURITY ENGINEER
+      Merkle proofs, verifier utility, audit hash chain, RBAC, signing,
+      dossier generation.
+  R6  DOMAIN / LEGAL-TECHNICAL LEAD
+      Statutory templates, VASP registry curation, SAHYOG payload contract,
+      demo narrative, honesty review of every user-facing claim.
+
+3.2  THE ROLE MOST TEAMS OMIT AND SHOULD NOT
+
+  R6. Without someone who owns the legal correctness of the output and the
+  honesty of the claims, the team builds an impressive graph tool that
+  cannot be used and cannot be defended. On this project R6 has veto power
+  over any user-facing statement — including the pitch deck.
+
+3.3  RACI FOR PHASE GATES
+
+  ┌────────────────────────┬────┬────┬────┬────┬────┬────┐
+  │ Gate decision          │ R1 │ R2 │ R3 │ R4 │ R5 │ R6 │
+  ├────────────────────────┼────┼────┼────┼────┼────┼────┤
+  │ Phase 1 exit           │ A  │ R  │ I  │ C  │ C  │ I  │
+  │ Phase 2 exit           │ C  │ R  │ A  │ I  │ I  │ C  │
+  │ Phase 3 exit           │ C  │ A  │ R  │ C  │ C  │ C  │
+  │ Phase 4 exit           │ C  │ I  │ I  │ C  │ A  │ R  │
+  │ Phase 5 exit           │ C  │ C  │ C  │ C  │ A  │ R  │
+  │ Any user-facing claim  │ I  │ I  │ C  │ C  │ C  │ A  │
+  └────────────────────────┴────┴────┴────┴────┴────┴────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+4.  ENGINEERING STANDARDS APPLIED FROM DAY ONE
+═════════════════════════════════════════════════════════════════════════════
+
+  These are not Phase 5 activities. Retrofitting any of them costs more than
+  doing them from the first commit.
+
+  ES-01  Money is NUMERIC(78,0) base units. A CI lint rejects FLOAT/REAL/
+         DOUBLE columns matching /(value|amount|balance|fee)/.
+  ES-02  Every externally-sourced record carries ingest_run_id, provider,
+         fetched_at, and a digest. No exceptions, from the first ingestion
+         commit.
+  ES-03  Every API endpoint declares its required permission. A missing
+         declaration fails the build.
+  ES-04  Secrets never in code, images, or committed env files. Secret
+         scanning blocks merges from day one.
+  ES-05  Structured logging with a correlation id propagated across every
+         service hop, from the first service.
+  ES-06  Migrations are forward-only and reviewed; any migration touching an
+         evidence-bearing table needs a second reviewer.
+  ES-07  Model artefacts are hash-addressed and immutable from the first
+         trained model, not from the first promoted one.
+  ES-08  Test coverage floor: 80% on evidence/proof/legal modules, 60%
+         elsewhere. Evidence code is the highest-risk code in the product.
+  ES-09  Determinism: every stochastic component takes an explicit seed
+         parameter from its first line of code. Adding seeding later means
+         auditing every call site.
+  ES-10  Contract-first API design: the OpenAPI schema is agreed before the
+         frontend and backend diverge.
+
+
+═════════════════════════════════════════════════════════════════════════════
+5.  PHASE 1 — FOUNDATION
+═════════════════════════════════════════════════════════════════════════════
+
+  OBJECTIVE
+    Trustworthy multi-chain data lands in a canonical, provenance-aware,
+    finality-gated store, reachable through a chain-agnostic core.
+
+  WHY THIS IS FIRST
+    Every later phase consumes this. A classifier trained on data with
+    unknown provenance produces conclusions with unknown provenance.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM PLT — PLATFORM & SCAFFOLD
+─────────────────────────────────────────────────────────────────────────────
+  T1.PLT.01  P0  2 ED   Monorepo scaffold; service skeletons; Docker Compose
+                        bringing up Postgres, Neo4j, Redis, MinIO, API,
+                        worker, web with one command.
+  T1.PLT.02  P0  1 ED   CI pipeline: lint, type-check, unit tests, secret
+                        scan, the ES-01 money-type lint, dependency audit.
+  T1.PLT.03  P0  1 ED   Structured logging + correlation-id middleware.
+  T1.PLT.04  P0  2 ED   OpenAPI contract for the v1 surface; generated
+                        client types for the frontend.
+  T1.PLT.05  P1  1 ED   Alembic migration harness with the two-reviewer rule
+                        wired into CODEOWNERS.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM ING — INGESTION & CHAIN ADAPTERS
+─────────────────────────────────────────────────────────────────────────────
+  T1.ING.01  P0  3 ED   ChainAdapter interface: detect_address,
+                        fetch_address_activity, fetch_transaction,
+                        fetch_block_header, get_finality_depth,
+                        build_inclusion_proof, normalise_to_canonical.
+  T1.ING.02  P0  4 ED   Bitcoin UTXO adapter: address validation (Base58Check
+                        + Bech32/Bech32m), tx/vin/vout normalisation,
+                        co-spend clustering with CoinJoin/PayJoin exclusion
+                        rules, change-address heuristics with the heuristic
+                        NAMED per inference.
+  T1.ING.03  P0  4 ED   Ethereum account adapter: EIP-55 validation, native
+                        + ERC-20 log decoding, internal-call trace expansion,
+                        nonce sequencing.
+  T1.ING.04  P0  2 ED   Chain detection and disambiguation service
+                        implementing DSF §13 in full, including the
+                        ambiguous-0x parallel activity probe.
+  T1.ING.05  P0  3 ED   Provider abstraction with ≥2 providers per supported
+                        chain; token-bucket rate limiting; exponential
+                        backoff with jitter; health scoring skeleton.
+  T1.ING.06  P0  3 ED   Cross-validation engine: canonical_digest computation
+                        over the agreed field subset; CROSS_VALIDATED /
+                        SINGLE_SOURCE / CONFLICTED assignment; field-level
+                        diff capture on conflict.
+  T1.ING.07  P0  2 ED   Confirmation-depth finality gate, config-driven per
+                        chain, with PENDING_FINALITY tagging.
+  T1.ING.08  P1  3 ED   BNB, Polygon adapters (thin variants of T1.ING.03).
+  T1.ING.09  P1  4 ED   Tron adapter (hybrid semantics: TRX vs TRC-20).
+  T1.ING.10  P1  4 ED   Solana adapter, including the honest documentation of
+                        its proof semantics limitation.
+  T1.ING.11  P2  3 ED   Self-hosted node provider implementation for OPSEC
+                        mode.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM GRF — CANONICAL STORE & GRAPH
+─────────────────────────────────────────────────────────────────────────────
+  T1.GRF.01  P0  3 ED   PostgreSQL schema: chains, assets, addresses,
+                        partitioned blocks/transactions/transfers,
+                        provenance tables. DDL from PHANTASM-DBS §6–§8.
+  T1.GRF.02  P0  2 ED   Neo4j shard provisioning; constraints and indexes;
+                        consistent-hash shard router.
+  T1.GRF.03  P0  3 ED   Idempotent MERGE writer (Postgres → Neo4j
+                        projection); replay-safety test proving duplicate
+                        ingestion creates no duplicate edges.
+  T1.GRF.04  P0  2 ED   Canonical Cypher query library Q1–Q4 with the
+                        high-degree guard.
+  T1.GRF.05  P1  2 ED   Graph snapshot mechanism (snapshot_id) for
+                        reproducible replay.
+  T1.GRF.06  P1  2 ED   Bridge stub model + bridge_index table and resolver.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM CAS / ADM / UIX — CASE SPINE & SHELL
+─────────────────────────────────────────────────────────────────────────────
+  T1.CAS.01  P0  2 ED   Case CRUD with the lawful-authority DB constraint
+                        and the case state machine (DSF §8).
+  T1.CAS.02  P0  1 ED   Seed address management with source-of-address
+                        capture.
+  T1.ADM.01  P0  2 ED   Users, roles, permissions, deny-by-default
+                        authorisation middleware, ES-03 build check.
+  T1.ADM.02  P0  2 ED   Hash-chained audit log with the immutability
+                        triggers and the verification function.
+  T1.UIX.01  P0  3 ED   App shell: header, navigation, theming tokens, the
+                        non-dismissible MOCK chip.
+  T1.UIX.02  P0  3 ED   Case creation wizard including the authority gate
+                        step and live per-address chain detection.
+  T1.UIX.03  P0  2 ED   Case dashboard and case workspace with the NEXT STEP
+                        card.
+
+  ─────────────────────────────────────────────────────────────────────────
+  PHASE 1 DELIVERABLES
+  ─────────────────────────────────────────────────────────────────────────
+   D1.1  One-command local environment.
+   D1.2  Two working chain adapters (one UTXO, one account) behind a
+         chain-agnostic interface.
+   D1.3  Canonical store with provenance, cross-validation status and
+         finality gating on every record.
+   D1.4  Chain-sharded graph projection, idempotent and replayable.
+   D1.5  Case spine with the authority gate enforced at the database.
+   D1.6  Immutable hash-chained audit log.
+   D1.7  Web shell with case creation and workspace.
+
+  ─────────────────────────────────────────────────────────────────────────
+  PHASE 1 EXIT CRITERIA  (each with its verification method)
+  ─────────────────────────────────────────────────────────────────────────
+   E1.1  A real Bitcoin address and a real Ethereum address both ingest
+         end-to-end and appear in both stores.
+         VERIFY: automated integration test against live providers.
+   E1.2  Ingesting the same address twice creates zero duplicate transfers
+         or edges.
+         VERIFY: replay test asserting row and relationship counts.
+   E1.3  A transaction with disagreeing providers is marked CONFLICTED and
+         its field-level diff is retrievable.
+         VERIFY: test with a stubbed disagreeing provider.
+   E1.4  A transaction below the chain's confirmation minimum is marked
+         PENDING_FINALITY and is invisible to path search.
+         VERIFY: unit + integration test.
+   E1.5  A case cannot leave DRAFT without an authority reference, tested by
+         attempting the update directly in SQL.
+         VERIFY: the DB CHECK constraint rejects it.
+   E1.6  Tampering with an audit row is rejected, and altering one via a
+         superuser breaks the chain and is detected by the verifier.
+         VERIFY: negative test invoking fn_verify_audit_chain.
+   E1.7  No FLOAT column holds a monetary value anywhere in the schema.
+         VERIFY: the ES-01 CI lint passes.
+   E1.8  Adding a third chain requires no change to any core service module.
+         VERIFY: architecture fitness test asserting no chain-specific
+         imports outside the adapters package.
+
+  PHASE 1 RISKS
+   - Provider rate limits throttle development. Mitigate: aggressive local
+     caching of immutable facts from day one; a fixture corpus for tests so
+     CI never hits a live provider.
+   - Tron/Solana semantics differ more than expected. Mitigate: they are P1,
+     scheduled after the interface has been proven by two dissimilar chains.
+
+
+═════════════════════════════════════════════════════════════════════════════
+6.  PHASE 2 — INTELLIGENCE CORE
+═════════════════════════════════════════════════════════════════════════════
+
+  OBJECTIVE
+    Determine what an unlabelled wallet is, and separate obfuscation noise
+    from meaningful value flow — both with measured, honestly-reported
+    accuracy.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM MLP — ML PLATFORM (built before the models, deliberately)
+─────────────────────────────────────────────────────────────────────────────
+  T2.MLP.01  P0  2 ED   Model registry tables + artefact store; hash-
+                        addressed immutable artefacts.
+  T2.MLP.02  P0  3 ED   Evaluation harness enforcing TEMPORAL splits, with
+                        minority-class metrics, PR-AUC, bootstrap CIs,
+                        stratification by activity decile, and an ablation
+                        runner.
+  T2.MLP.03  P0  1 ED   Model card template with mandatory failure-modes and
+                        prohibited-uses sections; promotion blocked without.
+  T2.MLP.04  P1  2 ED   Shadow-mode serving and comparison recording.
+  T2.MLP.05  P1  1 ED   Drift monitoring: abstention rate, mean max
+                        probability, feature PSI, override rate.
+
+  NOTE ON ORDERING: the evaluation harness precedes the first model. A team
+  that trains first and evaluates later invariably discovers it used a random
+  split, and by then the impressive number is already in the deck.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM TPP — TEMPORAL POINT PROCESS
+─────────────────────────────────────────────────────────────────────────────
+  T2.TPP.01  P0  3 ED   Event-stream extraction per address from the
+                        canonical store.
+  T2.TPP.02  P0  4 ED   Hawkes MLE fitting: μ, α, β, branching ratio,
+                        log-likelihood; INSUFFICIENT_DATA below the minimum
+                        event count rather than a meaningless confident fit.
+  T2.TPP.03  P0  3 ED   Pattern classifier: ORGANIC / PEEL_CHAIN / SMURFING
+                        / BOT_BURST / DUST_STORM with per-pattern scores.
+  T2.TPP.04  P0  2 ED   Soft pruning with prune_reason; "show pruned" path
+                        preserved; per-asset dust thresholds.
+  T2.TPP.05  P1  4 ED   Neural Hawkes variant behind a config switch, with
+                        comparative metrics recorded against the MLE fit.
+  T2.TPP.06  P1  2 ED   Burst extraction and the intensity chart data
+                        endpoint for the node inspector.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM CLS — CLASSIFICATION
+─────────────────────────────────────────────────────────────────────────────
+  T2.CLS.01  P0  3 ED   Feature engineering: structural (degree, fan-in/out
+                        ratios, clustering), temporal (from TPP), value
+                        (distribution, round-number rate), and contract
+                        features. Versioned feature spec.
+  T2.CLS.02  P0  2 ED   Heterogeneous subgraph extraction (Cypher Q7) into
+                        PyG hetero batches, preserving node and edge types.
+  T2.CLS.03  P0  5 ED   HGT node classifier: training loop, temporal split,
+                        class-imbalance handling, checkpointing.
+  T2.CLS.04  P0  3 ED   R-GCN relational encoder; joint-vs-separate decision
+                        recorded explicitly in the model card.
+  T2.CLS.05  P0  3 ED   Elliptic dataset pipeline + baseline reproduction
+                        (GCN baselines, and MDST-GNN / TGN as published
+                        comparison points, with protocol differences stated).
+  T2.CLS.06  P0  2 ED   Probability calibration (isotonic / temperature) as
+                        a first-class model family; uncalibrated scores never
+                        reach the API.
+  T2.CLS.07  P0  2 ED   Abstention threshold → UNKNOWN, rather than forcing
+                        an argmax label.
+  T2.CLS.08  P0  2 ED   Contract bytecode/selector signature index and
+                        matching, reported as an INDEPENDENT signal kept
+                        structurally separate from the model score.
+  T2.CLS.09  P1  4 ED   TGN dynamic memory for sparse and zero-day wallets.
+  T2.CLS.10  P1  2 ED   Human override flow with justification, versioned
+                        supersession, and the curator label-candidate queue.
+  T2.CLS.11  P1  2 ED   Explainability capture: top features and
+                        per-relation attention mass, faithful to the actual
+                        computation.
+
+  ─────────────────────────────────────────────────────────────────────────
+  PHASE 2 DELIVERABLES
+  ─────────────────────────────────────────────────────────────────────────
+   D2.1  Model registry with immutable artefacts and mandatory model cards.
+   D2.2  Evaluation harness that makes a random split structurally
+         impossible.
+   D2.3  Hawkes temporal profiling with pattern classification and soft
+         pruning.
+   D2.4  HGT + R-GCN classifier with calibrated probabilities and an
+         abstention class.
+   D2.5  Measured Elliptic results with ablation table, stratified metrics,
+         bootstrap intervals, and a written negative-findings section.
+   D2.6  Contract signature index.
+
+  ─────────────────────────────────────────────────────────────────────────
+  PHASE 2 EXIT CRITERIA
+  ─────────────────────────────────────────────────────────────────────────
+   E2.1  Every reported metric comes from a temporal split. VERIFY: the
+         DB CHECK on split_strategy plus a harness assertion.
+   E2.2  The ablation table exists and includes a well-tuned gradient-
+         boosting baseline on engineered features. VERIFY: the table is
+         published in the model card, including any case where the simple
+         baseline wins.
+   E2.3  Calibration is measured (ECE, Brier) and a reliability curve is
+         retrievable via the API. VERIFY: endpoint test.
+   E2.4  Metrics are reported stratified by wallet activity decile, showing
+         the sparse-wallet degradation explicitly. VERIFY: model card review.
+   E2.5  A known peel-chain sequence is detected and flagged. VERIFY: test
+         against a labelled historical example.
+   E2.6  Pruning is non-destructive: pruned edges remain retrievable.
+         VERIFY: integration test.
+   E2.7  A model cannot be promoted without a card containing failure modes
+         and prohibited uses. VERIFY: the DB CHECK rejects the promotion.
+   E2.8  Negative findings are documented. VERIFY: R6 review sign-off.
+
+  PHASE 2 RISKS
+   - Elliptic is Bitcoin-only and its label taxonomy does not match the
+     PHANTASM class set. Mitigate: state the mapping explicitly in the model
+     card; do not silently reinterpret licit/illicit as a service taxonomy.
+   - Overfitting to a benchmark that does not represent Indian typologies.
+     Mitigate: this is disclosed, not solved. DR-002 requires saying so.
+   - GPU availability. Mitigate: CPU inference path maintained and tested;
+     training is the only GPU-dependent step.
+
+
+═════════════════════════════════════════════════════════════════════════════
+7.  PHASE 3 — ATTRIBUTION ENGINE
+═════════════════════════════════════════════════════════════════════════════
+
+  OBJECTIVE
+    Find the nearest custodial hop, rank alternatives, and attach a
+    calibrated, decomposable confidence with an honest termination reason.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM ATT — PATH ATTRIBUTION
+─────────────────────────────────────────────────────────────────────────────
+  T3.ATT.01  P0  2 ED   Absorption determination service implementing DSF §14
+                        in order (registry-confirmed → registry → model →
+                        obfuscator → sanctioned → hub-forcing).
+  T3.ATT.02  P0  3 ED   Personalised PageRank frontier restriction over the
+                        classified subgraph.
+  T3.ATT.03  P0  5 ED   Bidirectional shortest-path search with exponential
+                        time decay and value-share weighting; absorbing
+                        nodes never expanded.
+  T3.ATT.04  P0  2 ED   Termination decision tree (DSF §15) with the
+                        absorption-before-budget ordering, and a recorded
+                        reason on every terminal state.
+  T3.ATT.05  P0  2 ED   Top-K ranked candidate paths with per-hop evidence
+                        anchors.
+  T3.ATT.06  P0  3 ED   Value attribution accounting (proportional / FIFO /
+                        poison) with the method named on the path and later
+                        printed in the dossier.
+  T3.ATT.07  P1  2 ED   Frontier persistence and "continue from frontier".
+  T3.ATT.08  P1  3 ED   Cross-chain hop traversal via bridge stubs, with
+                        hop confidence weighted by correlation_method.
+  T3.ATT.09  P0  2 ED   Obfuscator termination path producing the Journey B
+                        result object, including anonymity-set estimation.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM CNF — CONFIDENCE
+─────────────────────────────────────────────────────────────────────────────
+  T3.CNF.01  P0  4 ED   Monte Carlo RWR estimator with a recorded seed,
+                        credible interval, convergence detection, and the
+                        1000-sample floor.
+  T3.CNF.02  P0  2 ED   Confidence decomposition into classification
+                        certainty, corroboration, temporal coherence, path
+                        length, and obfuscation penalty.
+  T3.CNF.03  P0  1 ED   Action-threshold gate and REVIEW_REQUIRED routing,
+                        including the obfuscator-crossing override
+                        (DSF §17 last branch).
+  T3.CNF.04  P1  2 ED   Calibration reporting surface wired to the
+                        confidence explainer.
+  T3.CNF.05  P1  1 ED   Sample-count sweep producing the latency-vs-accuracy
+                        trade-off curve for the evidence pack.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM UIX — RESULT SURFACES
+─────────────────────────────────────────────────────────────────────────────
+  T3.UIX.01  P0  4 ED   Trace launch (standard/advanced) and live progress
+                        with real per-stage counts over WebSocket, with the
+                        GET-reconstructable state contract.
+  T3.UIX.02  P0  5 ED   Graph canvas: WebGL rendering, visual encoding,
+                        hierarchical/force/temporal layouts, primary-path
+                        dominance, pruned layer toggle.
+  T3.UIX.03  P0  3 ED   Node inspector drawer with the full probability
+                        vector and "other possibilities".
+  T3.UIX.04  P0  3 ED   Path comparison cards and the mandatory hop table
+                        view with print stylesheet.
+  T3.UIX.05  P0  3 ED   Confidence meter component and the confidence
+                        explainer screen.
+  T3.UIX.06  P0  2 ED   Obfuscator-termination result screen (Journey B).
+  T3.UIX.07  P1  2 ED   Analyst review queue with review-value sorting and
+                        the evidence-tab precondition on Accept.
+
+  ─────────────────────────────────────────────────────────────────────────
+  PHASE 3 EXIT CRITERIA
+  ─────────────────────────────────────────────────────────────────────────
+   E3.1  A trace on a known historical incident reaches a correct custodial
+         terminus. VERIFY: manual validation against public reporting.
+   E3.2  Search does not expand any absorbing node. VERIFY: instrumented
+         test asserting expansion counts at a high-degree VASP node, with a
+         side-by-side comparison against unguarded BFS.
+   E3.3  Every terminal state carries a reason and every non-success state
+         renders its own screen. VERIFY: state-machine coverage test.
+   E3.4  The same trace re-run with the same snapshot, seed, parameters and
+         model versions produces a byte-identical result.
+         VERIFY: automated determinism test. This is the single most
+         important test in the product.
+   E3.5  A mixer-terminating trace produces the Journey B output with
+         anonymity-set context and no fabricated continuation.
+         VERIFY: test against a known mixer deposit.
+   E3.6  Below-threshold attributions route to review, and a path crossing
+         an obfuscator routes to review regardless of its score.
+         VERIFY: two integration tests.
+   E3.7  Graph canvas sustains ≥30 FPS at 5k nodes / 15k edges on integrated
+         graphics. VERIFY: measured, on the actual target hardware class.
+   E3.8  Every graph view has a full-fidelity table equivalent.
+         VERIFY: manual review + accessibility test.
+
+  PHASE 3 RISKS
+   - Search quality is bounded by Phase 2 classification quality. Mitigate:
+     registry-first absorption ordering reduces dependence on the model for
+     the most important nodes.
+   - Monte Carlo cost at high sample counts. Mitigate: the sweep in
+     T3.CNF.05 produces the actual trade-off curve rather than a guess.
+
+
+═════════════════════════════════════════════════════════════════════════════
+8.  PHASE 4 — EVIDENCE & LEGAL PIPELINE
+═════════════════════════════════════════════════════════════════════════════
+
+  OBJECTIVE
+    Make the output verifiable by a third party and actionable under law,
+    with every legal control enforced structurally.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM EVD — EVIDENCE SEALING
+─────────────────────────────────────────────────────────────────────────────
+  T4.EVD.01  P0  4 ED   Bitcoin Merkle branch construction and verification
+                        (double SHA-256), with correct sibling ordering.
+  T4.EVD.02  P0  4 ED   EVM Merkle-Patricia transaction/receipt trie proofs,
+                        stored with the correct proof_kind — not mislabelled
+                        as a plain Merkle proof.
+  T4.EVD.03  P0  2 ED   Per-chain proof strategy table; alternative mechanism
+                        recorded and printed where no classic proof exists
+                        (the Solana case).
+  T4.EVD.04  P0  3 ED   STANDALONE VERIFIER UTILITY: offline,
+                        dependency-light, source published in the dossier
+                        appendix, downloadable from the evidence screen.
+  T4.EVD.05  P0  2 ED   Evidence item ledger with frozen payload snapshots
+                        and the chain-of-custody log.
+  T4.EVD.06  P0  2 ED   Proof verification at seal time; failed proofs
+                        surfaced at the top and counted on the cover page.
+  T4.EVD.07  P1  3 ED   Reorg re-validation job and the dossier invalidation
+                        flow (DSF §7).
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM SHY — DOSSIER & DISCLOSURE
+─────────────────────────────────────────────────────────────────────────────
+  T4.SHY.01  P0  5 ED   Dossier generator (ReportLab/WeasyPrint/Jinja2):
+                        cover with hash, statutory certificate, methodology,
+                        hop table, per-hop evidence with proofs, confidence
+                        analysis, model cards by reference, human overrides,
+                        LIMITATIONS, verification appendix.
+  T4.SHY.02  P0  1 ED   Starred-section enforcement: limitations, proofs,
+                        confidence and overrides cannot be deselected.
+  T4.SHY.03  P0  2 ED   Dossier immutability, versioning, supersession with
+                        a substantive reason, and the finality DB trigger.
+  T4.SHY.04  P0  3 ED   VASP registry (bitemporal) with source citations and
+                        verification dates; staleness flagging.
+  T4.SHY.05  P0  2 ED   Jurisdiction routing decision tree (DSF §16),
+                        evaluated at the offence date.
+  T4.SHY.06  P0  3 ED   Disclosure request composer with per-field
+                        provenance, machine-vs-final diff tracking, and the
+                        SCOPE CHECK data-minimisation panel.
+  T4.SHY.07  P0  2 ED   SAHYOG connector interface + MOCK implementation,
+                        with the non-dismissible MOCK labelling.
+  T4.SHY.08  P0  2 ED   Disclosure state machine, idempotent dispatch,
+                        SLA timers, and the approval/dispatch separation.
+  T4.SHY.09  P0  2 ED   Supervisor sign-off screen including the generated
+                        "WHAT COULD BE WRONG" section.
+  T4.SHY.10  P1  2 ED   MLAT / Interpol packet generation for offshore
+                        termini.
+  T4.SHY.11  P1  2 ED   VASP response ingestion, including the
+                        address_confirmed_ours ground-truth capture.
+  T4.SHY.12  P1  1 ED   Erratum generation flow (PRD LR-013).
+  T4.SHY.13  P1  2 ED   Machine-readable JSON evidence bundle with its own
+                        versioned schema.
+
+  ─────────────────────────────────────────────────────────────────────────
+  PHASE 4 EXIT CRITERIA
+  ─────────────────────────────────────────────────────────────────────────
+   E4.1  An independent party, using only the published verifier and the
+         dossier appendix, verifies a cited transaction's inclusion without
+         access to PHANTASM. VERIFY: performed live by someone outside the
+         team. This is the product's central claim and must be demonstrated,
+         not asserted.
+   E4.2  No dossier can be generated omitting the limitations, confidence,
+         proof or override sections. VERIFY: API-level test attempting it.
+   E4.3  A dossier cannot be generated while any cited hop is
+         PENDING_FINALITY or REORGED. VERIFY: the DB trigger rejects it.
+   E4.4  A disclosure request cannot reach SIGNED without an approver
+         distinct from the creator and a passed scope check.
+         VERIFY: the DB CHECK rejects it.
+   E4.5  Duplicate dispatch with the same idempotency key does not produce
+         a second legal service. VERIFY: integration test.
+   E4.6  The MOCK label cannot be hidden by CSS override, user preference,
+         or URL parameter. VERIFY: manual attempt + test.
+   E4.7  A Solana-cited transaction's dossier states the alternative
+         mechanism and does not imply a Bitcoin-style inclusion proof.
+         VERIFY: R6 review of the rendered PDF.
+   E4.8  Registry status is evaluated at the offence date, not today.
+         VERIFY: test with a registration whose valid_from post-dates the
+         offence.
+
+  PHASE 4 RISKS
+   - Statutory template correctness. Mitigate: templates are admin-versioned
+     and carry a written instruction that the deploying agency's legal cell
+     must review before operational use. The software does not assert legal
+     sufficiency on its own authority.
+   - SAHYOG programmatic access unavailable. Mitigate: ADR-012; mock behind
+     a stable interface, labelled.
+
+
+═════════════════════════════════════════════════════════════════════════════
+9.  PHASE 5 — HARDENING, SCALE & PILOT READINESS
+═════════════════════════════════════════════════════════════════════════════
+
+  OBJECTIVE
+    Make it deployable, defensible and operable by an agency.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM SEC / ADM
+─────────────────────────────────────────────────────────────────────────────
+  T5.SEC.01  P1  3 ED   SSO (SAML/OIDC) integration; MFA enforcement;
+                        hardware-token support for signing officers.
+  T5.SEC.02  P1  2 ED   Jurisdictional scoping and time-bounded cross-
+                        jurisdiction access grants with justification.
+  T5.SEC.03  P1  3 ED   HSM/KMS-backed signing; private key material never
+                        in application memory.
+  T5.SEC.04  P1  2 ED   Audit chain daily verification job, checkpoints, and
+                        the CRITICAL alert path.
+  T5.SEC.05  P1  2 ED   STRIDE threat model per service; review at each gate.
+  T5.SEC.06  P1  2 ED   Usage anomaly detection for insider misuse; denied
+                        actions audited.
+  T5.SEC.07  P2  3 ED   External penetration test; no open high/critical
+                        findings permitted at go-live.
+  T5.SEC.08  P2  1 ED   SBOM generation, dependency pinning, vulnerability
+                        gating in CI.
+  T5.SEC.09  P2  2 ED   OPSEC mode: restrict ingestion to self-hosted
+                        providers for sensitive cases.
+  T5.ADM.01  P1  2 ED   Admin surfaces: config with safe ranges, feature
+                        flags, provider health, model registry with the
+                        prominent kill switch.
+  T5.ADM.02  P1  2 ED   Audit explorer with the hash-chain integrity
+                        indicator and signed per-case extract export.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM OPS / OBS / PERF
+─────────────────────────────────────────────────────────────────────────────
+  T5.OBS.01  P1  2 ED   Metrics: queue depth, provider health, stage
+                        durations, abstention rate, conflict rate, dossier
+                        failures.
+  T5.OBS.02  P1  2 ED   Distributed tracing across services.
+  T5.OBS.03  P1  1 ED   Alerting: audit chain mismatch, reorg on cited
+                        evidence, provider disagreement spike, model drift.
+  T5.OPS.01  P1  3 ED   Infrastructure-as-code; government-cloud-compatible
+                        deployment with no proprietary managed service on
+                        the critical path.
+  T5.OPS.02  P1  2 ED   Backup, restore drill, RPO/RTO validation, legal-hold
+                        exclusion in the retention job.
+  T5.OPS.03  P2  2 ED   Object-lock COMPLIANCE mode on the evidence bucket;
+                        cross-region replication.
+  T5.PERF.01 P1  3 ED   EXECUTE NFR-PERF-001: the 50-seed stratified
+                        benchmark; publish p50/p90/p99 per stage with
+                        provider latency isolated from compute latency; SET
+                        the latency SLO from the measurement.
+  T5.PERF.02 P1  2 ED   Fair-share provider scheduling so one large trace
+                        cannot starve concurrent traces.
+  T5.PERF.03 P2  2 ED   Load test at the pilot concurrency target.
+
+─────────────────────────────────────────────────────────────────────────────
+  WORKSTREAM UX / QUALITY
+─────────────────────────────────────────────────────────────────────────────
+  T5.UIX.01  P1  3 ED   WCAG 2.1 AA conformance pass, both themes, including
+                        keyboard graph navigation and the greyscale review.
+  T5.UIX.02  P1  2 ED   Localisation: Hindi + one regional language; legal
+                        text never machine-translated.
+  T5.UIX.03  P1  2 ED   Print stylesheets for hop table, evidence table,
+                        dossier and case summary.
+  T5.UIX.04  P1  3 ED   USABILITY VALIDATION (UIX §32): the 5-participant
+                        task test, the critical-error test, the mixer test,
+                        the supervisor test.
+  T5.UIX.05  P2  2 ED   Responsive read-only mobile surface with dispatch
+                        and signing structurally unavailable.
+
+  ─────────────────────────────────────────────────────────────────────────
+  PHASE 5 EXIT CRITERIA
+  ─────────────────────────────────────────────────────────────────────────
+   E5.1  SSO + MFA + RBAC + jurisdictional scoping enforced end-to-end.
+   E5.2  Signing keys are HSM-backed; a test confirms private key material
+         is not retrievable via the application.
+   E5.3  Penetration test complete with no open high/critical findings.
+   E5.4  Latency SLO published FROM MEASUREMENT per NFR-PERF-001, not from
+         aspiration.
+   E5.5  Restore drill executed successfully in a scratch environment, with
+         the audit chain intact and a sample trace reproducing identically.
+   E5.6  Usability test passed: ≥4 of 5 non-specialist officers complete
+         Journey A unaided, and none attempt to dispatch the deliberately
+         below-threshold attribution without comment.
+   E5.7  WCAG 2.1 AA verified in both themes; greyscale review passed.
+   E5.8  Legal-cell sign-off recorded on the statutory templates.
+   E5.9  Calibration report published for every ACTIVE model.
+
+
+═════════════════════════════════════════════════════════════════════════════
+10.  THE 7-DAY HACKATHON COMPRESSION
+═════════════════════════════════════════════════════════════════════════════
+
+10.1  THE COMPRESSION PRINCIPLE
+
+  The five phases compress by REDUCING BREADTH, NEVER BY REMOVING CONTROLS.
+  Two chains instead of six. One trained model family instead of three. A
+  mock connector instead of a real one. But the authority gate, the finality
+  gate, the confidence gate, the Merkle proof, the limitations section and
+  the audit chain all ship — because they are what makes the demo different
+  from every other graph visualisation on the floor.
+
+  Anything cut is cut as BREADTH. Nothing is cut as HONESTY.
+
+10.2  DAY-BY-DAY
+
+  ┌───────┬────────────────────────────────────────────────────────────────┐
+  │ Day   │ Target                                                         │
+  ├───────┼────────────────────────────────────────────────────────────────┤
+  │ 1     │ Scaffold up (T1.PLT.01–03). Postgres/Neo4j/Redis/MinIO running.│
+  │       │ Bitcoin adapter + Ethereum adapter skeletons (T1.ING.01–03).   │
+  │       │ Canonical schema applied (T1.GRF.01). Case spine + authority   │
+  │       │ gate (T1.CAS.01, T1.ADM.02).                                   │
+  │       │ PARALLEL: R4 builds the app shell and case wizard.             │
+  ├───────┼────────────────────────────────────────────────────────────────┤
+  │ 2     │ Ingestion working end-to-end on both chains. Cross-validation  │
+  │       │ across two providers (T1.ING.05–06). Finality gate            │
+  │       │ (T1.ING.07). Graph projection + Q1–Q4 (T1.GRF.02–04).         │
+  │       │ GATE: Phase-1 exit criteria E1.1–E1.5 pass.                    │
+  ├───────┼────────────────────────────────────────────────────────────────┤
+  │ 3     │ Evaluation harness FIRST (T2.MLP.02) — before any training.    │
+  │       │ Elliptic pipeline + HGT/R-GCN training with temporal splits    │
+  │       │ (T2.CLS.03–05). Calibration (T2.CLS.06). Abstention           │
+  │       │ (T2.CLS.07). Feature engineering (T2.CLS.01–02).               │
+  ├───────┼────────────────────────────────────────────────────────────────┤
+  │ 4     │ Hawkes fitting + pattern classification + soft pruning         │
+  │       │ (T2.TPP.01–04). Absorption determination (T3.ATT.01). PPR +    │
+  │       │ decayed bidirectional search (T3.ATT.02–04). Monte Carlo       │
+  │       │ confidence with CI and seed (T3.CNF.01–03).                    │
+  │       │ GATE: determinism test E3.4 passes.                            │
+  ├───────┼────────────────────────────────────────────────────────────────┤
+  │ 5     │ Graph canvas, node inspector, path comparison, hop table,      │
+  │       │ confidence meter and explainer (T3.UIX.02–05). Live trace      │
+  │       │ progress (T3.UIX.01). Obfuscator result screen (T3.UIX.06).    │
+  ├───────┼────────────────────────────────────────────────────────────────┤
+  │ 6     │ Merkle proof construction + verification + THE STANDALONE      │
+  │       │ VERIFIER (T4.EVD.01–04, 06). Dossier generator with the        │
+  │       │ starred sections (T4.SHY.01–03). VASP registry seed +          │
+  │       │ jurisdiction routing (T4.SHY.04–05).                           │
+  ├───────┼────────────────────────────────────────────────────────────────┤
+  │ 7     │ Disclosure composer + scope check + SAHYOG MOCK + supervisor   │
+  │       │ sign-off (T4.SHY.06–09). END-TO-END REHEARSAL on a public      │
+  │       │ historical incident. Measured Elliptic metrics finalised with  │
+  │       │ the ablation table. Evidence pack assembled (§11). Buffer.     │
+  └───────┴────────────────────────────────────────────────────────────────┘
+
+10.3  DAY-7 BUFFER IS NOT OPTIONAL
+
+  Reserve the final third of Day 7 for nothing but rehearsal and repair. A
+  demo that has never been run end-to-end on the presentation machine, on
+  the venue network, will fail on the venue network.
+
+10.4  WHAT GETS CUT FIRST IF TIME RUNS SHORT
+
+  In this order, and no other:
+    1. TGN dynamic memory (T2.CLS.09) — HGT+R-GCN alone still demonstrates
+       classify-then-search.
+    2. Neural Hawkes variant (T2.TPP.05) — MLE Hawkes is sufficient.
+    3. Cross-chain bridge traversal (T3.ATT.08) — single-chain traces still
+       prove the thesis.
+    4. Chains 3–6 (T1.ING.08–10) — two dissimilar chains prove the adapter
+       abstraction.
+    5. Analyst review queue UI (T3.UIX.07) — the gate still functions via
+       the case workspace.
+
+  WHAT IS NEVER CUT
+    The authority gate. The finality gate. Cross-validation. The confidence
+    interval. The Merkle proof and its independent verifier. The limitations
+    section. The MOCK label. The audit chain. The honest mixer termination.
+    Cutting any of these produces a different, worse product that happens to
+    look the same on a slide.
+
+
+═════════════════════════════════════════════════════════════════════════════
+11.  DEMO SCRIPT & JUDGING EVIDENCE PACK
+═════════════════════════════════════════════════════════════════════════════
+
+11.1  THE DEMO ARC (12 minutes)
+
+  MIN 0–1   THE PROBLEM, CONCRETELY
+            One address, one victim, a 72-hour window, and a district cyber
+            cell with no forensics specialist. Name the gap SAHYOG has when
+            the wallet is unhosted.
+
+  MIN 1–3   THE GOLDEN PATH
+            Create the case. Show the authority gate refusing to proceed
+            without a reference — this is a 15-second moment that separates
+            the product from a demo.
+            Launch the trace. Show REAL per-stage counts.
+
+  MIN 3–6   THE RESULT, WITH ITS UNCERTAINTY
+            Graph canvas. Click the mixer-adjacent node. Open the confidence
+            explainer. Read the fixed disclaimer sentence aloud: this is not
+            a probability that anyone committed an offence.
+            Show the credible interval, not just the point estimate.
+
+  MIN 6–8   THE MOMENT THAT WINS IT
+            Open the evidence screen. Download the standalone verifier.
+            HAND IT TO A JUDGE and have them verify a Merkle proof on their
+            own machine, offline, without touching PHANTASM.
+            This is the single highest-value 90 seconds available. Rehearse
+            it more than anything else.
+
+  MIN 8–10  THE HONEST FAILURE
+            Run the pre-staged mixer case. Show TERMINATED_AT_OBFUSCATOR.
+            Show the correlation candidates WITH the anonymity-set estimate.
+            State plainly: we do not claim to break a well-operated mixer.
+            Then show that a dossier is still produced, because proving
+            funds entered a mixer is itself evidence.
+
+  MIN 10–11 THE LEGAL OUTPUT
+            Dossier with the non-removable limitations section. Disclosure
+            request with the scope check. The MOCK label, pointed at
+            explicitly and explained.
+
+  MIN 11–12 WHAT IS BUILT VS WHAT IS ROADMAP
+            Show the §2 table. Say which side of it every claim sits on.
+
+11.2  EVIDENCE PACK TO HAVE READY
+
+   EP-1  Measured Elliptic test-split metrics: minority-class precision,
+         recall, F1, PR-AUC, confusion matrix, bootstrap intervals.
+   EP-2  The ablation table, including any row where the gradient-boosting
+         baseline beats the GNN. Presenting that row builds more credibility
+         than hiding it costs.
+   EP-3  Stratification by activity decile showing sparse-wallet degradation.
+   EP-4  Calibration curve with ECE and Brier score.
+   EP-5  Latency-vs-accuracy curve from the Monte Carlo sample sweep.
+   EP-6  Expansion-count comparison: guarded search vs unguarded BFS at a
+         high-degree node. This is the quantitative proof of ADR-001.
+   EP-7  The determinism test output: two runs, identical hashes.
+   EP-8  The standalone verifier, on a USB stick, ready to hand over.
+   EP-9  Source citations with verification dates for every statistic used
+         in the pitch (PRD §0.5).
+
+11.3  ANTICIPATED JUDGE QUESTIONS AND THE HONEST ANSWERS
+
+  ┌──────────────────────────────────┬──────────────────────────────────────┐
+  │ Question                         │ Answer                               │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ "How is this different from      │ It produces a legal instrument and a │
+  │  Chainalysis?"                   │ verifiable proof, not a picture. And │
+  │                                  │ it classifies unknown wallets rather │
+  │                                  │ than looking them up in a tag DB.    │
+  │ "What's your accuracy?"          │ Here is the minority-class F1 on a   │
+  │                                  │ temporal split, with the interval,   │
+  │                                  │ stratified by wallet activity. Note  │
+  │                                  │ the sparse-wallet degradation.       │
+  │ "Can you trace through a mixer?" │ No. We flag, correlate, and score,   │
+  │                                  │ and we say so on the artefact.       │
+  │ "Is the SAHYOG integration real?"│ No. It is a mock behind a stable     │
+  │                                  │ interface, labelled in the UI.       │
+  │ "How fast is it?"                │ We have not published an SLO because │
+  │                                  │ we have not run the full benchmark.  │
+  │                                  │ Here is the procedure that will set  │
+  │                                  │ it. (This answer is stronger than a  │
+  │                                  │ number we cannot defend.)            │
+  │ "Would this stand in court?"     │ The proofs are independently          │
+  │                                  │ verifiable — verify one now. The     │
+  │                                  │ statutory templates require the      │
+  │                                  │ deploying agency's legal cell review;│
+  │                                  │ we do not assert legal sufficiency   │
+  │                                  │ on our own authority.                │
+  └──────────────────────────────────┴──────────────────────────────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+12.  CROSS-PHASE TEST STRATEGY
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────┬────────────────────────────────────────────────────┐
+  │ Layer                │ Scope and non-negotiables                          │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ Unit                 │ Adapters, normalisation, proof construction,       │
+  │                      │ decision trees. 80% floor on evidence modules.     │
+  │ Property-based       │ Proof construction/verification round-trip;        │
+  │                      │ value arithmetic never loses precision.            │
+  │ Golden-file          │ Dossier rendering; a diff in the rendered output   │
+  │                      │ must be an intentional, reviewed change.           │
+  │ Integration          │ Ingestion against fixture provider responses;      │
+  │                      │ never against live providers in CI.                │
+  │ State-machine        │ Every transition and every guard in DSF §8–§12,    │
+  │                      │ including the illegal transitions being refused.   │
+  │ Determinism          │ Same inputs → byte-identical output. Runs on every │
+  │                      │ commit touching the attribution path.              │
+  │ Negative/adversarial │ Tamper the audit log. Submit a below-threshold     │
+  │                      │ dispatch. Generate a dossier with a non-final hop. │
+  │                      │ Every one must be refused at the database layer.   │
+  │ Accessibility        │ Automated axe pass + manual keyboard and screen-   │
+  │                      │ reader walkthrough of the core journey.            │
+  │ Performance          │ Canvas FPS on target hardware; the NFR-PERF-001    │
+  │                      │ benchmark corpus.                                  │
+  │ Usability            │ UIX §32, with the critical-error test as the       │
+  │                      │ pass/fail gate.                                    │
+  └──────────────────────┴────────────────────────────────────────────────────┘
+
+  THE TEST THAT MATTERS MOST
+    The determinism test (E3.4). Everything else can be fixed after a
+    failure is noticed. A non-deterministic attribution engine cannot answer
+    a defence expert's replay demand, and that failure surfaces in a
+    courtroom rather than in CI.
+
+
+═════════════════════════════════════════════════════════════════════════════
+13.  ENVIRONMENTS, CI/CD & RELEASE MECHANICS
+═════════════════════════════════════════════════════════════════════════════
+
+  ENVIRONMENTS
+    LOCAL    Docker Compose; fixture providers; MOCK SAHYOG; synthetic cases.
+    CI       Ephemeral; no live provider calls; deterministic fixtures.
+    DEMO     Seeded with public historical incidents; MOCK SAHYOG; labelled.
+    PILOT    Agency-controlled; SSO; HSM; real providers; real registry.
+
+  ENVIRONMENT SAFETY RULES
+    - is_mock_environment defaults TRUE. Flipping it is an admin action that
+      requires a configured production endpoint to exist.
+    - The MOCK chip renders from server-supplied state, never from a client
+      flag, so it cannot be suppressed from the browser.
+    - No environment other than PILOT may hold real case data. Enforced by
+      configuration and by the deployment runbook.
+
+  RELEASE
+    - Trunk-based with short-lived branches; CODEOWNERS requiring a second
+      reviewer on evidence, legal and migration paths.
+    - Expand → backfill → contract for schema changes, with contract deferred
+      to a later release than expand.
+    - Model promotion is a separate, audited workflow from code deployment.
+      A model going live is not a deploy.
+
+
+═════════════════════════════════════════════════════════════════════════════
+14.  RISK-BURNDOWN SCHEDULE
+═════════════════════════════════════════════════════════════════════════════
+
+  Which phase retires which PRD risk, and by what evidence.
+
+  ┌─────────┬───────┬──────────────────────────────────────────────────────┐
+  │ Risk    │ Phase │ Retired by                                           │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-001 │ 3,4   │ Confidence gate + supervisory signature + typed       │
+  │ wrong   │       │ recipient confirmation + erratum procedure.           │
+  │ VASP    │       │ EVIDENCE: E3.6, E4.4.                                 │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-002 │ 1,5   │ Authority gate + purpose limitation + audited denials │
+  │ insider │       │ + anomaly detection. EVIDENCE: E1.5, T5.SEC.06.       │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-003 │ 1,4,5 │ Hash-chained audit + immutable artefacts + object     │
+  │ tamper  │       │ lock + HSM. EVIDENCE: E1.6, E5.2, E5.5.               │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-004 │ 3     │ Honest termination, never fabricated continuation.    │
+  │ mixer   │       │ EVIDENCE: E3.5. Accepted, not eliminated.             │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-005 │ 1,5   │ Multi-source + caching + fair-share scheduling +      │
+  │ rate    │       │ self-hosted option. EVIDENCE: T5.PERF.02.             │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-006 │ 2     │ Temporal splits + ablations + per-decile metrics +    │
+  │ overfit │       │ explicit scope statement. EVIDENCE: E2.1–E2.4, E2.8.  │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-007 │ 1,4   │ Finality gate + re-validation job + invalidation and  │
+  │ reorg   │       │ erratum flows. EVIDENCE: E1.4, E4.3, T4.EVD.07.       │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-008 │ 4     │ Per-chain proof_kind + mandatory alternative          │
+  │ proof   │       │ mechanism. EVIDENCE: E4.7.                            │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-009 │ 4     │ Mock behind a stable interface, labelled.             │
+  │ SAHYOG  │       │ EVIDENCE: E4.6.                                       │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-010 │ 5     │ OPSEC mode with self-hosted providers. Documented as  │
+  │ opsec   │       │ a residual risk where OPSEC mode is not used.         │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-011 │ 2     │ Curator gate on override-derived labels.              │
+  │ feedback│       │ EVIDENCE: T2.CLS.10 + DSF §6.                         │
+  ├─────────┼───────┼──────────────────────────────────────────────────────┤
+  │ RSK-012 │ all   │ Every PR reviewed against the PRD §1.2 scope          │
+  │ scope   │       │ sentence. EVIDENCE: review checklist.                 │
+  └─────────┴───────┴──────────────────────────────────────────────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+15.  DEPENDENCY & PROCUREMENT REGISTER
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌────────────────────────┬────────┬──────────────────────────────────────┐
+  │ Dependency             │ Needed │ Status / action                      │
+  │                        │ by     │                                      │
+  ├────────────────────────┼────────┼──────────────────────────────────────┤
+  │ Provider API keys      │ P1 d1  │ Free tiers sufficient for prototype; │
+  │ (Etherscan, Alchemy,   │        │ paid tier budgeting required for     │
+  │  Blockchair, etc.)     │        │ pilot. Cost accounting in T5.ADM.01. │
+  │ Elliptic dataset       │ P2     │ Public. Confirm licence terms permit │
+  │                        │        │ the intended use before Day 3.       │
+  │ GPU for training       │ P2     │ Cloud or institutional. CPU          │
+  │                        │        │ inference path must remain tested.   │
+  │ Graph engine licence   │ P1     │ Confirm terms at pilot scale on       │
+  │                        │        │ government cloud. PRD OQ-05.          │
+  │ SAHYOG programmatic    │ P4     │ OPEN — PRD OQ-01. Mock until          │
+  │ access                 │        │ resolved.                             │
+  │ FIU-IND registry data  │ P4     │ Manual curation with citations and    │
+  │                        │        │ verification dates until a feed       │
+  │                        │        │ exists.                               │
+  │ Legal-cell review      │ P4     │ OPEN — PRD OQ-02. Blocks E5.8.        │
+  │ HSM / KMS              │ P5     │ Agency-provided in pilot.             │
+  │ Labelled Indian case   │ P5+    │ OPEN — PRD OQ-03. Blocks production   │
+  │ data                   │        │ fine-tuning. Disclosed as a           │
+  │                        │        │ limitation until available.           │
+  │ Penetration test       │ P5     │ Procure before pilot go-live.         │
+  └────────────────────────┴────────┴──────────────────────────────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+16.  DEFINITION OF DONE
+═════════════════════════════════════════════════════════════════════════════
+
+16.1  PER TASK
+   ☐ Code reviewed; evidence/legal/migration paths have a second reviewer.
+   ☐ Unit tests written and passing; coverage floor met for the module class.
+   ☐ Any stochastic component takes an explicit seed.
+   ☐ Any externally-sourced data carries provenance fields.
+   ☐ Any user-facing string reviewed against the §25 microcopy standards.
+   ☐ Any new permission declared on its endpoint.
+   ☐ Any new configuration parameter has a documented safe range.
+   ☐ Observability: the operation emits a metric and logs with a
+     correlation id.
+   ☐ Documentation updated in the relevant specification document.
+
+16.2  PER PHASE
+   ☐ All P0 tasks complete.
+   ☐ All exit criteria verified by their stated method, with evidence
+     recorded — not asserted in a stand-up.
+   ☐ Risk register reviewed and updated.
+   ☐ Threat model reviewed for the services touched.
+   ☐ Demo of the phase's capability performed to the full team, including R6.
+   ☐ Any claim the phase enables is classified as demonstrable or roadmap
+     (§2) and the table is updated.
+
+
+═════════════════════════════════════════════════════════════════════════════
+17.  POST-PILOT ROADMAP (beyond v1)
+═════════════════════════════════════════════════════════════════════════════
+
+  Sequenced by value, not by novelty.
+
+  R1  Production fine-tuning on FIU-IND-labelled case data, with the
+      curator-gated label pipeline already built in Phase 2.
+  R2  Confirmed-attribution feedback loop: every VASP response confirming or
+      denying an address becomes a calibration data point. This is the
+      highest-value data the system will ever generate about itself.
+  R3  Remaining chains and chain families; Layer-2 rollup support.
+  R4  Cross-case correlation at national scale with jurisdiction-aware
+      visibility, subject to data-sharing agreements.
+  R5  Travel-rule data attachment where lawfully available, kept
+      structurally separate from on-chain-derived facts.
+  R6  External anchoring of the audit chain head, so that even a full
+      database compromise cannot rewrite history undetectably.
+  R7  Multi-agency deployment model with per-agency key custody.
+  R8  Analyst-facing typology authoring: let experienced analysts define
+      new laundering patterns as first-class detectable structures rather
+      than waiting for a retrain.
+
+  EXPLICITLY NOT ON THE ROADMAP
+    Privacy-coin tracing. Person-level risk scoring. Automated freezing.
+    Full ownership clustering. Each was rejected for a reason recorded in
+    PRD §3.2 and DSF §24; a future team should read those before reopening
+    them.
+
+
+═════════════════════════════════════════════════════════════════════════════
+18.  APPENDIX — TASK ID INDEX
+═════════════════════════════════════════════════════════════════════════════
+
+  PHASE 1  T1.PLT.01–05 · T1.ING.01–11 · T1.GRF.01–06 · T1.CAS.01–02 ·
+           T1.ADM.01–02 · T1.UIX.01–03
+  PHASE 2  T2.MLP.01–05 · T2.TPP.01–06 · T2.CLS.01–11
+  PHASE 3  T3.ATT.01–09 · T3.CNF.01–05 · T3.UIX.01–07
+  PHASE 4  T4.EVD.01–07 · T4.SHY.01–13
+  PHASE 5  T5.SEC.01–09 · T5.ADM.01–02 · T5.OBS.01–03 · T5.OPS.01–03 ·
+           T5.PERF.01–03 · T5.UIX.01–05
+
+  APPROXIMATE EFFORT BY PHASE (engineer-days, planning estimate only)
+    Phase 1   ~55 ED      Phase 2   ~50 ED      Phase 3   ~52 ED
+    Phase 4   ~42 ED      Phase 5   ~48 ED
+    TOTAL     ~247 ED for the full v1 including pilot hardening.
+
+  These totals are for sequencing and dependency reasoning. They are not a
+  schedule, and converting them to calendar dates without a fixed team size
+  and a known availability profile would produce a number that is precise
+  and wrong.
+
+─────────────────────────────────────────────────────────────────────────────
+                END OF IMPLEMENTATION PLAN — PHANTASM-IMP-v1.0
+─────────────────────────────────────────────────────────────────────────────

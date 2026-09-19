@@ -1,0 +1,2799 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  PHANTASM — DATABASE SCHEMA SPECIFICATION                                    ║
+║  Polyglot Persistence Design: PostgreSQL · Neo4j · Redis · Object Store      ║
+║                                                                              ║
+║  Document ID    : PHANTASM-DBS-v1.0                                          ║
+║  Classification : RESTRICTED — LEA USE                                       ║
+║  Depends on     : PHANTASM-PRD-v1.0                                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+TABLE OF CONTENTS
+─────────────────────────────────────────────────────────────────────────────
+  0.  STORAGE STRATEGY & DESIGN LAWS
+  1.  SYSTEM-OF-RECORD MAP
+  2.  POSTGRESQL — LOGICAL ER OVERVIEW
+  3.  POSTGRESQL — ENUM TYPES & EXTENSIONS
+  4.  POSTGRESQL — IDENTITY, RBAC & JURISDICTION
+  5.  POSTGRESQL — CASE MANAGEMENT
+  6.  POSTGRESQL — CHAIN & ASSET REFERENCE DATA
+  7.  POSTGRESQL — CANONICAL LEDGER FACTS (partitioned)
+  8.  POSTGRESQL — PROVENANCE & CROSS-VALIDATION
+  9.  POSTGRESQL — TEMPORAL ANALYSIS ARTEFACTS
+ 10.  POSTGRESQL — CLASSIFICATION ARTEFACTS
+ 11.  POSTGRESQL — TRACE, PATH & CONFIDENCE
+ 12.  POSTGRESQL — MERKLE PROOFS & EVIDENCE
+ 13.  POSTGRESQL — VASP REGISTRY (bitemporal)
+ 14.  POSTGRESQL — DOSSIERS & LEGAL INSTRUMENTS
+ 15.  POSTGRESQL — MODEL REGISTRY & MLOPS
+ 16.  POSTGRESQL — IMMUTABLE AUDIT LOG (hash-chained)
+ 17.  POSTGRESQL — CONFIGURATION & FEATURE FLAGS
+ 18.  POSTGRESQL — INDEX STRATEGY SUMMARY
+ 19.  POSTGRESQL — CONSTRAINTS, TRIGGERS & INVARIANTS
+ 20.  POSTGRESQL — PARTITIONING & RETENTION
+ 21.  NEO4J — GRAPH MODEL (nodes, relationships, properties)
+ 22.  NEO4J — CONSTRAINTS, INDEXES & SHARD TOPOLOGY
+ 23.  NEO4J — CANONICAL CYPHER QUERY LIBRARY
+ 24.  REDIS — KEYSPACE SPECIFICATION
+ 25.  OBJECT STORE — BUCKET & KEY LAYOUT
+ 26.  DATA LIFECYCLE, BACKUP & LEGAL HOLD
+ 27.  MIGRATION STRATEGY
+ 28.  SIZING ESTIMATES
+ 29.  SEED / REFERENCE DATA
+
+
+═════════════════════════════════════════════════════════════════════════════
+0.  STORAGE STRATEGY & DESIGN LAWS
+═════════════════════════════════════════════════════════════════════════════
+
+0.1  WHY POLYGLOT
+
+  A single engine cannot serve four fundamentally different access patterns:
+
+    (1) Transactional, relational, ACID          → PostgreSQL
+        cases, users, dossiers, audit, registry
+    (2) Deep multi-hop typed traversal           → Neo4j / Memgraph
+        the transaction multigraph, chain-sharded
+    (3) Sub-millisecond hot lookup + queueing    → Redis
+        edge cache, rate-limit buckets, task broker, locks
+    (4) Large immutable binaries                 → S3-compatible object store
+        dossier PDFs, model artefacts, raw provider payloads
+
+  Forcing (2) into PostgreSQL produces recursive CTEs that die at depth 6 on
+  a hot wallet. Forcing (1) into Neo4j loses the ACID guarantees that legal
+  artefacts require. The split is deliberate, not incidental.
+
+0.2  THE SEVEN DESIGN LAWS (violating any is a review blocker)
+
+  LAW 1 — MONEY IS NEVER A FLOAT.
+    All values are NUMERIC(78,0) storing base units (wei, satoshi, sun,
+    lamports). 78 digits covers uint256. Decimals live in the asset table.
+    A FLOAT/DOUBLE column holding a value amount fails code review.
+
+  LAW 2 — FACTS ARE IMMUTABLE, OPINIONS ARE VERSIONED.
+    Ledger facts (tx, block, transfer) are INSERT-only. Classifications,
+    scores, and annotations are append-only versioned rows. Nothing that has
+    entered a dossier is ever UPDATEd.
+
+  LAW 3 — EVERY ROW KNOWS WHERE IT CAME FROM.
+    ingest_run_id, source provider, fetched_at, and payload digest are
+    mandatory on all externally-sourced data.
+
+  LAW 4 — AUDIT IS APPEND-ONLY AT THE DATABASE LEVEL.
+    Enforced by revoking UPDATE/DELETE and by a BEFORE trigger that raises.
+    Not by application discipline.
+
+  LAW 5 — BLOCK HEIGHT IS AUTHORITATIVE FOR ORDER; TIMESTAMPS ARE ADVISORY.
+    Miners/validators can lie about time. They cannot lie about height.
+
+  LAW 6 — ADDRESSES ARE STORED CANONICAL + RAW.
+    address_canonical (lowercased hex / checksummed per chain rules) for
+    joining; address_raw (exactly as observed) for evidentiary fidelity.
+
+  LAW 7 — DETERMINISM IS PERSISTED.
+    Every trace stores model versions, parameter set, RNG seed, and
+    snapshot id. Without these, PRD principle P4 is unenforceable.
+
+0.3  NAMING CONVENTIONS
+  - snake_case, plural table names, singular column names.
+  - Primary keys: `id` UUID v7 (time-ordered) unless a natural key exists.
+  - Foreign keys: `<referenced_table_singular>_id`.
+  - Timestamps: TIMESTAMPTZ, always UTC, suffix `_at`.
+  - Booleans: prefix `is_` / `has_`.
+  - Enums: PostgreSQL native ENUM for closed sets that change rarely; a
+    lookup table where operators must add values without a migration.
+  - Indexes: `ix_<table>_<cols>`; unique: `ux_`; partial: append `_partial`.
+
+
+═════════════════════════════════════════════════════════════════════════════
+1.  SYSTEM-OF-RECORD MAP
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌────────────────────────────┬───────────────┬────────────────────────────┐
+  │ Data                       │ System of     │ Replicated to              │
+  │                            │ record        │                            │
+  ├────────────────────────────┼───────────────┼────────────────────────────┤
+  │ Users, roles, cases        │ PostgreSQL    │ —                          │
+  │ Canonical transactions     │ PostgreSQL    │ Neo4j (as edges)           │
+  │ Address registry           │ PostgreSQL    │ Neo4j (as nodes)           │
+  │ Graph topology & traversal │ Neo4j         │ — (derived, rebuildable)   │
+  │ Classifications            │ PostgreSQL    │ Neo4j (node property cache)│
+  │ Merkle proofs              │ PostgreSQL    │ Object store (bundle)      │
+  │ Dossier PDFs               │ Object store  │ PostgreSQL (metadata+hash) │
+  │ Model artefacts            │ Object store  │ PostgreSQL (registry)      │
+  │ Audit log                  │ PostgreSQL    │ WORM archive (Phase 5)     │
+  │ Hot edge cache             │ Redis         │ — (rebuildable)            │
+  │ Task queue                 │ Redis         │ — (transient)              │
+  └────────────────────────────┴───────────────┴────────────────────────────┘
+
+  RULE: Neo4j is a DERIVED store. It must be fully rebuildable from
+  PostgreSQL. If Neo4j is lost, no evidence is lost. This is a deliberate
+  resilience property — the graph engine is an accelerator, not a vault.
+
+
+═════════════════════════════════════════════════════════════════════════════
+2.  POSTGRESQL — LOGICAL ER OVERVIEW
+═════════════════════════════════════════════════════════════════════════════
+
+    organizations ──< users ──< user_roles >── roles
+          │                │
+          │                └──< sessions
+          ▼
+       cases ──< case_seed_addresses >── addresses
+         │  │                                 │
+         │  └──< case_events                  │
+         │  └──< case_attachments             ▼
+         │                             address_classifications
+         ├──< traces ──< trace_stages          (versioned)
+         │        │
+         │        ├──< trace_paths ──< trace_path_hops ──> transfers
+         │        │        │
+         │        │        └──< confidence_scores
+         │        │
+         │        └──< trace_provenance
+         │
+         ├──< dossiers ──< dossier_evidence_items ──> merkle_proofs
+         │        │
+         │        └──< dossier_signatures
+         │
+         └──< disclosure_requests ──< disclosure_request_fields
+                       │            └──< disclosure_request_events
+                       ▼
+                  vasp_entities ──< vasp_addresses
+                       └──< vasp_nodal_officers
+
+    chains ──< assets
+       │  └──< blocks ──< transactions ──< transfers
+       │                       │
+       │                       └──< transaction_sources (cross-validation)
+       │
+       └──< chain_finality_configs
+
+    model_registry ──< model_versions ──< model_evaluations
+                                   └──< model_promotions
+
+    audit_log (hash-chained, append-only)
+    system_config
+    ingest_runs
+
+
+═════════════════════════════════════════════════════════════════════════════
+3.  POSTGRESQL — ENUM TYPES & EXTENSIONS
+═════════════════════════════════════════════════════════════════════════════
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- EXTENSIONS
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";      -- digest(), gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";       -- fuzzy search on entity names
+CREATE EXTENSION IF NOT EXISTS "btree_gin";     -- composite GIN indexes
+CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+
+-- UUID v7 (time-ordered) helper. If the server build lacks native v7,
+-- implement in application code; DO NOT fall back to v4 for high-insert
+-- tables — random UUIDs destroy B-tree locality on ledger tables.
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- ENUM TYPES
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TYPE chain_model_t AS ENUM ('UTXO', 'ACCOUNT');
+
+CREATE TYPE case_status_t AS ENUM (
+    'DRAFT', 'ACTIVE', 'REVIEW_REQUIRED', 'ATTRIBUTED',
+    'DISPATCHED', 'RESPONDED', 'SUSPENDED', 'CLOSED', 'ARCHIVED'
+);
+
+CREATE TYPE case_type_t AS ENUM (
+    'INVESTMENT_FRAUD', 'RANSOMWARE', 'SEXTORTION', 'PHISHING',
+    'MULE_NETWORK', 'DRUG_TRAFFICKING', 'TERROR_FINANCE',
+    'EXCHANGE_HACK', 'PIG_BUTCHERING', 'OTHER'
+);
+
+CREATE TYPE trace_status_t AS ENUM (
+    'QUEUED', 'INGESTING', 'PRUNING', 'CLASSIFYING', 'SEARCHING',
+    'SCORING', 'SEALING', 'COMPLETED', 'FAILED', 'CANCELLED',
+    'BUDGET_EXCEEDED', 'NO_PATH_FOUND', 'TERMINATED_AT_OBFUSCATOR'
+);
+
+CREATE TYPE node_class_t AS ENUM (
+    'EOA_PERSONAL', 'MULE', 'VASP_DEPOSIT', 'VASP_HOT', 'VASP_COLD',
+    'MIXER', 'BRIDGE', 'DEX_ROUTER', 'DEX_POOL', 'STAKING',
+    'CONTRACT_OTHER', 'MERCHANT_PSP', 'GAMBLING', 'MINER',
+    'SANCTIONED', 'UNKNOWN'
+);
+
+CREATE TYPE temporal_pattern_t AS ENUM (
+    'ORGANIC', 'PEEL_CHAIN', 'SMURFING', 'BOT_BURST',
+    'DUST_STORM', 'INSUFFICIENT_DATA'
+);
+
+CREATE TYPE validation_status_t AS ENUM (
+    'CROSS_VALIDATED', 'SINGLE_SOURCE', 'CONFLICTED',
+    'PENDING_FINALITY', 'REORGED', 'UNVERIFIED'
+);
+
+CREATE TYPE proof_status_t AS ENUM (
+    'VERIFIED', 'FAILED', 'UNAVAILABLE', 'NOT_APPLICABLE', 'PENDING'
+);
+
+CREATE TYPE proof_kind_t AS ENUM (
+    'BTC_MERKLE_DOUBLE_SHA256',   -- classic Bitcoin tx Merkle branch
+    'ETH_MPT_RECEIPT',            -- Merkle-Patricia receipts trie proof
+    'ETH_MPT_TRANSACTION',        -- Merkle-Patricia transactions trie proof
+    'TRON_TX_MERKLE',             -- Tron block tx Merkle root inclusion
+    'SOLANA_ENTRY_ATTESTATION',   -- NOT a Merkle proof; see §12.4
+    'HEADER_ANCHORED_DIGEST'      -- fallback: signed digest + header pin
+);
+
+CREATE TYPE jurisdiction_t AS ENUM (
+    'FIU_REGISTERED_DOMESTIC', 'FIU_REGISTERED_OFFSHORE',
+    'NOT_REGISTERED_OFFSHORE', 'UNKNOWN_ENTITY', 'SANCTIONED_JURISDICTION'
+);
+
+CREATE TYPE disclosure_status_t AS ENUM (
+    'DRAFT', 'PENDING_APPROVAL', 'SIGNED', 'SUBMITTED',
+    'ACKNOWLEDGED', 'RESPONDED', 'REJECTED', 'WITHDRAWN',
+    'ERRATUM_ISSUED', 'CLOSED'
+);
+
+CREATE TYPE legal_basis_t AS ENUM (
+    'SEC_94_BNSS_2023', 'SEC_79_3_B_IT_ACT_2000',
+    'SEC_91_CRPC_LEGACY', 'MLAT_REQUEST', 'INTERPOL_CHANNEL',
+    'PRESERVATION_ORDER'
+);
+
+CREATE TYPE model_stage_t AS ENUM (
+    'TRAINING', 'CANDIDATE', 'SHADOW', 'ACTIVE', 'DEPRECATED', 'REVOKED'
+);
+
+CREATE TYPE actor_kind_t AS ENUM ('HUMAN', 'SERVICE', 'SCHEDULED_JOB');
+
+CREATE TYPE audit_severity_t AS ENUM ('INFO', 'NOTICE', 'WARNING', 'CRITICAL');
+
+
+═════════════════════════════════════════════════════════════════════════════
+4.  POSTGRESQL — IDENTITY, RBAC & JURISDICTION
+═════════════════════════════════════════════════════════════════════════════
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- organizations : the LEA unit hierarchy. Jurisdictional scoping anchors here.
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE organizations (
+    id                  UUID PRIMARY KEY,
+    parent_id           UUID REFERENCES organizations(id),
+    org_code            TEXT        NOT NULL UNIQUE,   -- e.g. 'TN-VLR-CCPS'
+    display_name        TEXT        NOT NULL,
+    org_type            TEXT        NOT NULL,          -- DISTRICT_CELL |
+                                                       -- STATE_HQ | I4C | FIU
+    state_code          TEXT,                          -- ISO 3166-2:IN
+    is_active           BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_org_no_self_parent CHECK (id <> parent_id)
+);
+CREATE INDEX ix_organizations_parent ON organizations(parent_id);
+
+COMMENT ON TABLE organizations IS
+  'Hierarchy drives default case visibility. A trace is visible to the owning
+   org and its ancestors, never to siblings, unless an explicit grant exists.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- users
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE users (
+    id                  UUID PRIMARY KEY,
+    organization_id     UUID        NOT NULL REFERENCES organizations(id),
+    external_subject_id TEXT        UNIQUE,   -- SSO 'sub' claim. NULL = local
+    username            TEXT        NOT NULL UNIQUE,
+    full_name           TEXT        NOT NULL,
+    rank_designation    TEXT        NOT NULL, -- printed on legal instruments
+    service_id_number   TEXT,                 -- badge / PIS number
+    official_email      TEXT        NOT NULL,
+    password_hash       TEXT,                 -- NULL when SSO-only
+    mfa_enrolled        BOOLEAN     NOT NULL DEFAULT FALSE,
+    signing_key_ref     TEXT,                 -- HSM key handle, NOT the key
+    is_active           BOOLEAN     NOT NULL DEFAULT TRUE,
+    deactivated_at      TIMESTAMPTZ,
+    last_login_at       TIMESTAMPTZ,
+    failed_login_count  INT         NOT NULL DEFAULT 0,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_users_auth_present
+        CHECK (external_subject_id IS NOT NULL OR password_hash IS NOT NULL)
+);
+CREATE INDEX ix_users_org ON users(organization_id) WHERE is_active;
+
+COMMENT ON COLUMN users.signing_key_ref IS
+  'Opaque HSM/KMS handle. Private key material MUST NOT exist in this DB.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- roles / permissions / user_roles
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE roles (
+    id                  SMALLINT PRIMARY KEY,
+    role_code           TEXT NOT NULL UNIQUE,  -- IO, ANALYST, SUPERVISOR,
+                                               -- LEGAL, ADMIN, AUDITOR,
+                                               -- MODEL_CURATOR
+    display_name        TEXT NOT NULL,
+    description         TEXT NOT NULL,
+    is_read_only        BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE permissions (
+    id                  SMALLINT PRIMARY KEY,
+    permission_code     TEXT NOT NULL UNIQUE,  -- 'case.create',
+                                               -- 'trace.launch',
+                                               -- 'dossier.sign', ...
+    description         TEXT NOT NULL,
+    is_privileged       BOOLEAN NOT NULL DEFAULT FALSE  -- forces re-auth
+);
+
+CREATE TABLE role_permissions (
+    role_id             SMALLINT NOT NULL REFERENCES roles(id),
+    permission_id       SMALLINT NOT NULL REFERENCES permissions(id),
+    PRIMARY KEY (role_id, permission_id)
+);
+
+CREATE TABLE user_roles (
+    user_id             UUID     NOT NULL REFERENCES users(id),
+    role_id             SMALLINT NOT NULL REFERENCES roles(id),
+    granted_by          UUID     NOT NULL REFERENCES users(id),
+    granted_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at          TIMESTAMPTZ,
+    PRIMARY KEY (user_id, role_id)
+);
+CREATE INDEX ix_user_roles_expiry ON user_roles(expires_at)
+    WHERE expires_at IS NOT NULL;
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- case_access_grants : explicit, time-bounded cross-jurisdiction access
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE case_access_grants (
+    id                  UUID PRIMARY KEY,
+    case_id             UUID NOT NULL,              -- FK added after cases
+    grantee_user_id     UUID NOT NULL REFERENCES users(id),
+    granted_by          UUID NOT NULL REFERENCES users(id),
+    justification       TEXT NOT NULL,
+    access_level        TEXT NOT NULL,              -- READ | CONTRIBUTE
+    granted_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at          TIMESTAMPTZ NOT NULL,
+    revoked_at          TIMESTAMPTZ,
+    CONSTRAINT ck_grant_window CHECK (expires_at > granted_at),
+    CONSTRAINT ck_grant_justified CHECK (length(justification) >= 20)
+);
+CREATE INDEX ix_grants_active ON case_access_grants(case_id, grantee_user_id)
+    WHERE revoked_at IS NULL;
+
+COMMENT ON TABLE case_access_grants IS
+  'PRD LR-002 purpose limitation. No implicit cross-jurisdiction visibility.
+   A minimum justification length is enforced so grants cannot be rubber-
+   stamped with a single character.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- sessions
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE sessions (
+    id                  UUID PRIMARY KEY,
+    user_id             UUID NOT NULL REFERENCES users(id),
+    issued_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at          TIMESTAMPTZ NOT NULL,
+    last_reauth_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source_ip           INET NOT NULL,
+    user_agent_digest   BYTEA NOT NULL,   -- hash, not raw UA string
+    mfa_satisfied       BOOLEAN NOT NULL DEFAULT FALSE,
+    revoked_at          TIMESTAMPTZ
+);
+CREATE INDEX ix_sessions_user_active ON sessions(user_id)
+    WHERE revoked_at IS NULL;
+
+
+═════════════════════════════════════════════════════════════════════════════
+5.  POSTGRESQL — CASE MANAGEMENT
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE cases (
+    id                      UUID PRIMARY KEY,
+    case_reference          TEXT        NOT NULL UNIQUE,
+        -- format PHM-<YYYY>-<STATE>-<NNNNNN>, generated by sequence+trigger
+    organization_id         UUID        NOT NULL REFERENCES organizations(id),
+    created_by              UUID        NOT NULL REFERENCES users(id),
+    assigned_to             UUID        REFERENCES users(id),
+    supervisor_id           UUID        REFERENCES users(id),
+
+    title                   TEXT        NOT NULL,
+    case_type               case_type_t NOT NULL,
+    status                  case_status_t NOT NULL DEFAULT 'DRAFT',
+    priority                SMALLINT    NOT NULL DEFAULT 3,  -- 1 highest
+
+    -- LAWFUL AUTHORITY GATE (PRD LR-001) ------------------------------------
+    fir_number              TEXT,
+    ncrp_acknowledgement    TEXT,
+    written_authority_ref   TEXT,
+    authority_recorded_at   TIMESTAMPTZ,
+    authority_recorded_by   UUID REFERENCES users(id),
+
+    -- victim/loss context (no personal data of the victim stored here) ------
+    reported_loss_base      NUMERIC(78,0),   -- INR paise as integer
+    reported_loss_currency  CHAR(3) DEFAULT 'INR',
+    incident_occurred_at    TIMESTAMPTZ,
+    complaint_filed_at      TIMESTAMPTZ,
+
+    legal_hold              BOOLEAN     NOT NULL DEFAULT FALSE,
+    retention_expires_at    TIMESTAMPTZ,
+
+    closed_at               TIMESTAMPTZ,
+    closure_reason          TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_case_authority_present CHECK (
+        status = 'DRAFT'
+        OR fir_number IS NOT NULL
+        OR ncrp_acknowledgement IS NOT NULL
+        OR written_authority_ref IS NOT NULL
+    ),
+    CONSTRAINT ck_case_priority CHECK (priority BETWEEN 1 AND 5),
+    CONSTRAINT ck_case_closed CHECK (
+        (status IN ('CLOSED','ARCHIVED')) = (closed_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX ix_cases_org_status ON cases(organization_id, status);
+CREATE INDEX ix_cases_assigned   ON cases(assigned_to)
+    WHERE status NOT IN ('CLOSED','ARCHIVED');
+CREATE INDEX ix_cases_legal_hold ON cases(id) WHERE legal_hold;
+CREATE INDEX ix_cases_retention  ON cases(retention_expires_at)
+    WHERE legal_hold = FALSE AND retention_expires_at IS NOT NULL;
+
+COMMENT ON CONSTRAINT ck_case_authority_present ON cases IS
+  'Hard enforcement of PRD LR-001: a case cannot leave DRAFT — and therefore
+   cannot run a trace — without a recorded lawful authority reference.';
+
+ALTER TABLE case_access_grants
+    ADD CONSTRAINT fk_grants_case FOREIGN KEY (case_id) REFERENCES cases(id);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- case_seed_addresses
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE case_seed_addresses (
+    id                  UUID PRIMARY KEY,
+    case_id             UUID NOT NULL REFERENCES cases(id) ON DELETE RESTRICT,
+    address_id          UUID NOT NULL,      -- FK to addresses (§6)
+    added_by            UUID NOT NULL REFERENCES users(id),
+    seed_role           TEXT NOT NULL,      -- PRIMARY_SUSPECT |
+                                            -- VICTIM_SOURCE | SECONDARY
+    source_of_address   TEXT NOT NULL,      -- COMPLAINT | BANK_RECORD |
+                                            -- DEVICE_FORENSICS | OSINT
+    notes               TEXT,
+    added_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (case_id, address_id)
+);
+CREATE INDEX ix_seed_addr_address ON case_seed_addresses(address_id);
+
+COMMENT ON COLUMN case_seed_addresses.source_of_address IS
+  'Provenance of the seed itself matters evidentially — a court will ask how
+   the investigator obtained the address.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- case_events : the human-visible case timeline
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE case_events (
+    id                  UUID PRIMARY KEY,
+    case_id             UUID NOT NULL REFERENCES cases(id),
+    actor_user_id       UUID REFERENCES users(id),
+    actor_kind          actor_kind_t NOT NULL DEFAULT 'HUMAN',
+    event_type          TEXT NOT NULL,
+    summary             TEXT NOT NULL,
+    detail              JSONB NOT NULL DEFAULT '{}'::jsonb,
+    related_entity_type TEXT,
+    related_entity_id   UUID,
+    occurred_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_case_events_case_time ON case_events(case_id, occurred_at DESC);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- case_attachments
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE case_attachments (
+    id                  UUID PRIMARY KEY,
+    case_id             UUID NOT NULL REFERENCES cases(id),
+    uploaded_by         UUID NOT NULL REFERENCES users(id),
+    file_name           TEXT NOT NULL,
+    mime_type           TEXT NOT NULL,
+    size_bytes          BIGINT NOT NULL,
+    sha256              BYTEA NOT NULL,
+    object_key          TEXT NOT NULL,
+    virus_scan_status   TEXT NOT NULL DEFAULT 'PENDING',
+    uploaded_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_attach_size CHECK (size_bytes > 0),
+    CONSTRAINT ck_attach_hash CHECK (octet_length(sha256) = 32)
+);
+
+
+═════════════════════════════════════════════════════════════════════════════
+6.  POSTGRESQL — CHAIN & ASSET REFERENCE DATA
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE chains (
+    id                      SMALLINT PRIMARY KEY,   -- stable internal id
+    chain_key               TEXT NOT NULL UNIQUE,   -- 'bitcoin','ethereum',...
+    display_name            TEXT NOT NULL,
+    chain_model             chain_model_t NOT NULL,
+    native_asset_symbol     TEXT NOT NULL,
+    caip2_identifier        TEXT,                   -- e.g. 'eip155:1'
+    address_regex           TEXT NOT NULL,          -- validation pattern
+    address_checksum_scheme TEXT NOT NULL,          -- EIP55 | BASE58CHECK |
+                                                    -- BECH32 | ED25519_B58
+    explorer_url_template   TEXT NOT NULL,
+    graph_shard_key         TEXT NOT NULL,          -- routes to Neo4j shard
+    proof_kind              proof_kind_t NOT NULL,
+    is_enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+    added_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON COLUMN chains.graph_shard_key IS
+  'Consistent-hash routing key. Adding a chain adds a shard; it does NOT
+   rebalance existing shards (PRD FR-GRF-002).';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- chain_finality_configs : confirmation-depth gate, config-driven (FR-ING-004)
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE chain_finality_configs (
+    id                      UUID PRIMARY KEY,
+    chain_id                SMALLINT NOT NULL REFERENCES chains(id),
+    min_confirmations       INT      NOT NULL,
+    finality_semantics      TEXT     NOT NULL,  -- PROBABILISTIC |
+                                                -- ECONOMIC_FINALITY |
+                                                -- DETERMINISTIC_CHECKPOINT
+    notes                   TEXT,
+    effective_from          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    effective_to            TIMESTAMPTZ,
+    set_by                  UUID NOT NULL REFERENCES users(id),
+    CONSTRAINT ck_finality_positive CHECK (min_confirmations >= 0),
+    CONSTRAINT ck_finality_window CHECK (
+        effective_to IS NULL OR effective_to > effective_from)
+);
+CREATE UNIQUE INDEX ux_finality_current ON chain_finality_configs(chain_id)
+    WHERE effective_to IS NULL;
+
+-- Rationale for defaults, recorded so the choice is defensible in court:
+--   BTC      6    ~1h, industry-standard economic finality
+--   ETH     12    post-Merge; prefer 'finalized' tag where RPC supports it
+--   BNB     15    faster blocks, shorter reorg window observed historically
+--   POLYGON 128   checkpoint-oriented; deeper due to known reorg depth
+--   TRON    19    SR supermajority confirmation
+--   SOLANA   0    uses 'finalized' commitment, not a depth count
+
+CREATE TABLE assets (
+    id                      UUID PRIMARY KEY,
+    chain_id                SMALLINT NOT NULL REFERENCES chains(id),
+    contract_address_canon  TEXT,               -- NULL for native asset
+    symbol                  TEXT NOT NULL,
+    name                    TEXT NOT NULL,
+    decimals                SMALLINT NOT NULL,
+    token_standard          TEXT,               -- ERC20|TRC20|SPL|NATIVE
+    is_stablecoin           BOOLEAN NOT NULL DEFAULT FALSE,
+    dust_threshold_base     NUMERIC(78,0),      -- per-asset, per FR-TPP-006
+    is_verified             BOOLEAN NOT NULL DEFAULT FALSE,
+    first_seen_at           TIMESTAMPTZ,
+    UNIQUE (chain_id, contract_address_canon),
+    CONSTRAINT ck_assets_decimals CHECK (decimals BETWEEN 0 AND 36)
+);
+CREATE INDEX ix_assets_symbol ON assets(chain_id, symbol);
+
+COMMENT ON COLUMN assets.dust_threshold_base IS
+  'Per-asset dust threshold in base units. A single global constant is wrong:
+   1 satoshi and 1 wei are not comparable quantities.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- addresses : the canonical address registry (mirrored into Neo4j as nodes)
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE addresses (
+    id                      UUID PRIMARY KEY,
+    chain_id                SMALLINT NOT NULL REFERENCES chains(id),
+    address_canonical       TEXT NOT NULL,
+    address_raw_first_seen  TEXT NOT NULL,
+    is_contract             BOOLEAN,
+    contract_bytecode_hash  BYTEA,      -- for bytecode-signature matching
+    contract_created_at_blk BIGINT,
+    first_activity_at       TIMESTAMPTZ,
+    last_activity_at        TIMESTAMPTZ,
+    tx_count_cached         BIGINT NOT NULL DEFAULT 0,
+    degree_in_cached        BIGINT NOT NULL DEFAULT 0,
+    degree_out_cached       BIGINT NOT NULL DEFAULT 0,
+    is_high_degree          BOOLEAN NOT NULL DEFAULT FALSE,
+    cache_refreshed_at      TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ux_addresses_chain_addr UNIQUE (chain_id, address_canonical)
+);
+CREATE INDEX ix_addresses_contract ON addresses(chain_id)
+    WHERE is_contract = TRUE;
+CREATE INDEX ix_addresses_bytecode ON addresses(contract_bytecode_hash)
+    WHERE contract_bytecode_hash IS NOT NULL;
+CREATE INDEX ix_addresses_highdeg ON addresses(chain_id)
+    WHERE is_high_degree = TRUE;
+
+COMMENT ON COLUMN addresses.is_high_degree IS
+  'Set when degree exceeds a configured threshold. Used to short-circuit
+   traversal and to force absorption-state evaluation early — this flag is
+   the practical defence against the O(b^d) explosion named in the PS.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- contract_signatures : bytecode/selector fingerprints (FR-CLS-006)
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE contract_signatures (
+    id                      UUID PRIMARY KEY,
+    signature_family        TEXT NOT NULL,   -- TORNADO_LIKE | UNISWAP_V2_PAIR
+                                             -- | STARGATE_BRIDGE | SAFE_MULTISIG
+    expected_class          node_class_t NOT NULL,
+    match_kind              TEXT NOT NULL,   -- BYTECODE_HASH |
+                                             -- SELECTOR_SET | STORAGE_LAYOUT
+    match_value             TEXT NOT NULL,
+    confidence_weight       NUMERIC(4,3) NOT NULL DEFAULT 0.900,
+    source_reference        TEXT NOT NULL,   -- where this fingerprint came from
+    added_by                UUID NOT NULL REFERENCES users(id),
+    added_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT ck_sig_weight CHECK (confidence_weight BETWEEN 0 AND 1)
+);
+CREATE INDEX ix_contract_sig_value ON contract_signatures(match_kind, match_value)
+    WHERE is_active;
+
+
+═════════════════════════════════════════════════════════════════════════════
+7.  POSTGRESQL — CANONICAL LEDGER FACTS (partitioned)
+═════════════════════════════════════════════════════════════════════════════
+
+-- These three tables are the evidentiary core. INSERT-only. Never UPDATE.
+-- Partitioned by chain_id (LIST) then by block-height range where volume
+-- requires it. Partitioning by chain also gives clean per-chain retention
+-- and lets a chain be detached wholesale if it is retired.
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- blocks
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE blocks (
+    id                      UUID        NOT NULL,
+    chain_id                SMALLINT    NOT NULL REFERENCES chains(id),
+    block_height            BIGINT      NOT NULL,
+    block_hash              BYTEA       NOT NULL,
+    parent_block_hash       BYTEA,
+    merkle_root             BYTEA,          -- NULL where chain has no tx root
+    state_root              BYTEA,
+    receipts_root           BYTEA,
+    block_timestamp         TIMESTAMPTZ NOT NULL,
+    tx_count                INT         NOT NULL DEFAULT 0,
+    is_orphaned             BOOLEAN     NOT NULL DEFAULT FALSE,
+    orphaned_detected_at    TIMESTAMPTZ,
+    ingest_run_id           UUID        NOT NULL,
+    ingested_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (chain_id, id)
+) PARTITION BY LIST (chain_id);
+
+CREATE TABLE blocks_bitcoin  PARTITION OF blocks FOR VALUES IN (1);
+CREATE TABLE blocks_ethereum PARTITION OF blocks FOR VALUES IN (2);
+CREATE TABLE blocks_bnb      PARTITION OF blocks FOR VALUES IN (3);
+CREATE TABLE blocks_polygon  PARTITION OF blocks FOR VALUES IN (4);
+CREATE TABLE blocks_tron     PARTITION OF blocks FOR VALUES IN (5);
+CREATE TABLE blocks_solana   PARTITION OF blocks FOR VALUES IN (6);
+
+CREATE UNIQUE INDEX ux_blocks_chain_hash ON blocks (chain_id, block_hash);
+CREATE INDEX ix_blocks_height ON blocks (chain_id, block_height DESC);
+CREATE INDEX ix_blocks_orphaned ON blocks (chain_id, block_height)
+    WHERE is_orphaned;
+
+COMMENT ON COLUMN blocks.is_orphaned IS
+  'Set by the re-validation job. Any evidence citing an orphaned block is
+   marked REORGED and triggers a P1 case alert (PRD US-ING-004 AC3).';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- transactions
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE transactions (
+    id                      UUID        NOT NULL,
+    chain_id                SMALLINT    NOT NULL,
+    tx_hash                 BYTEA       NOT NULL,
+    block_height            BIGINT      NOT NULL,
+    block_hash              BYTEA       NOT NULL,
+    tx_index_in_block       INT,
+    block_timestamp         TIMESTAMPTZ NOT NULL,
+
+    -- account-model fields (NULL on UTXO chains)
+    from_address_id         UUID,
+    to_address_id           UUID,
+    nonce                   BIGINT,
+    is_contract_creation    BOOLEAN NOT NULL DEFAULT FALSE,
+    input_selector          BYTEA,          -- first 4 bytes of calldata
+    status_success          BOOLEAN,
+
+    -- UTXO-model fields (NULL on account chains)
+    input_count             INT,
+    output_count            INT,
+    is_coinbase             BOOLEAN NOT NULL DEFAULT FALSE,
+
+    fee_base                NUMERIC(78,0),
+    confirmations_at_ingest INT,
+    validation_status       validation_status_t NOT NULL DEFAULT 'UNVERIFIED',
+    source_count            SMALLINT NOT NULL DEFAULT 0,
+    canonical_digest        BYTEA NOT NULL,  -- sha256 of canonical field set
+    ingest_run_id           UUID NOT NULL,
+    ingested_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (chain_id, id),
+    CONSTRAINT ck_tx_model_fields CHECK (
+        (input_count IS NOT NULL) OR (from_address_id IS NOT NULL)
+            OR is_coinbase
+    )
+) PARTITION BY LIST (chain_id);
+
+CREATE TABLE transactions_bitcoin  PARTITION OF transactions FOR VALUES IN (1);
+CREATE TABLE transactions_ethereum PARTITION OF transactions FOR VALUES IN (2);
+CREATE TABLE transactions_bnb      PARTITION OF transactions FOR VALUES IN (3);
+CREATE TABLE transactions_polygon  PARTITION OF transactions FOR VALUES IN (4);
+CREATE TABLE transactions_tron     PARTITION OF transactions FOR VALUES IN (5);
+CREATE TABLE transactions_solana   PARTITION OF transactions FOR VALUES IN (6);
+
+CREATE UNIQUE INDEX ux_tx_chain_hash ON transactions (chain_id, tx_hash);
+CREATE INDEX ix_tx_block   ON transactions (chain_id, block_height);
+CREATE INDEX ix_tx_from    ON transactions (from_address_id)
+    WHERE from_address_id IS NOT NULL;
+CREATE INDEX ix_tx_to      ON transactions (to_address_id)
+    WHERE to_address_id IS NOT NULL;
+CREATE INDEX ix_tx_pending ON transactions (chain_id, block_height)
+    WHERE validation_status = 'PENDING_FINALITY';
+CREATE INDEX ix_tx_conflicted ON transactions (chain_id)
+    WHERE validation_status = 'CONFLICTED';
+
+COMMENT ON COLUMN transactions.canonical_digest IS
+  'SHA-256 over the canonical field subset {tx_hash, block_height, block_hash,
+   from, to, value, asset, timestamp}. Two providers agree iff their digests
+   match. This makes cross-validation a constant-time comparison rather than
+   a field-by-field diff at query time (PRD US-ING-003 AC2).';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- transfers : the value-movement grain. THIS is what becomes a graph edge.
+-- ───────────────────────────────────────────────────────────────────────────
+-- One transaction may produce many transfers: native value + N token
+-- transfers + M internal calls. The graph edge is the transfer, not the tx.
+-- Getting this grain wrong is the single most common modelling error in
+-- blockchain forensics systems.
+
+CREATE TABLE transfers (
+    id                      UUID        NOT NULL,
+    chain_id                SMALLINT    NOT NULL,
+    transaction_id          UUID        NOT NULL,
+    tx_hash                 BYTEA       NOT NULL,   -- denormalised for joins
+    block_height            BIGINT      NOT NULL,
+    block_timestamp         TIMESTAMPTZ NOT NULL,
+
+    transfer_index          INT         NOT NULL,   -- ordinal within the tx
+    transfer_kind           TEXT        NOT NULL,   -- NATIVE | TOKEN |
+                                                    -- INTERNAL | UTXO_FLOW |
+                                                    -- FEE | BRIDGE_IN |
+                                                    -- BRIDGE_OUT
+    from_address_id         UUID,                   -- NULL on mint/coinbase
+    to_address_id           UUID,                   -- NULL on burn
+    asset_id                UUID        NOT NULL,
+    value_base              NUMERIC(78,0) NOT NULL,
+
+    -- UTXO linkage
+    utxo_spent_tx_hash      BYTEA,
+    utxo_spent_vout         INT,
+    utxo_created_vout       INT,
+
+    -- heuristic annotations (inference, kept separate from fact)
+    is_change_output        BOOLEAN,
+    change_heuristic        TEXT,       -- ADDRESS_REUSE | ROUND_NUMBER |
+                                        -- SCRIPT_TYPE_MATCH | POSITION
+    cospend_cluster_id      UUID,
+
+    validation_status       validation_status_t NOT NULL DEFAULT 'UNVERIFIED',
+    is_pruned               BOOLEAN     NOT NULL DEFAULT FALSE,
+    prune_reason            TEXT,
+    ingest_run_id           UUID        NOT NULL,
+    ingested_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (chain_id, id),
+    CONSTRAINT ck_transfer_value_nonneg CHECK (value_base >= 0),
+    CONSTRAINT ck_transfer_endpoints CHECK (
+        from_address_id IS NOT NULL OR to_address_id IS NOT NULL),
+    CONSTRAINT ck_prune_reason CHECK (
+        (is_pruned = FALSE) OR (prune_reason IS NOT NULL))
+) PARTITION BY LIST (chain_id);
+
+CREATE TABLE transfers_bitcoin  PARTITION OF transfers FOR VALUES IN (1);
+CREATE TABLE transfers_ethereum PARTITION OF transfers FOR VALUES IN (2);
+CREATE TABLE transfers_bnb      PARTITION OF transfers FOR VALUES IN (3);
+CREATE TABLE transfers_polygon  PARTITION OF transfers FOR VALUES IN (4);
+CREATE TABLE transfers_tron     PARTITION OF transfers FOR VALUES IN (5);
+CREATE TABLE transfers_solana   PARTITION OF transfers FOR VALUES IN (6);
+
+CREATE UNIQUE INDEX ux_transfers_natural
+    ON transfers (chain_id, tx_hash, transfer_index);
+CREATE INDEX ix_transfers_from_time
+    ON transfers (from_address_id, block_timestamp DESC)
+    WHERE is_pruned = FALSE;
+CREATE INDEX ix_transfers_to_time
+    ON transfers (to_address_id, block_timestamp DESC)
+    WHERE is_pruned = FALSE;
+CREATE INDEX ix_transfers_asset_value
+    ON transfers (asset_id, value_base DESC);
+CREATE INDEX ix_transfers_cluster
+    ON transfers (cospend_cluster_id)
+    WHERE cospend_cluster_id IS NOT NULL;
+CREATE INDEX ix_transfers_utxo_spent
+    ON transfers (utxo_spent_tx_hash, utxo_spent_vout)
+    WHERE utxo_spent_tx_hash IS NOT NULL;
+
+COMMENT ON TABLE transfers IS
+  'The unit of value movement and the unit of graph edge. Note that
+   is_pruned is a SOFT flag (PRD US-TPP-005 AC2) — pruning never deletes
+   evidence, it only excludes it from the default view and from search.';
+
+COMMENT ON COLUMN transfers.change_heuristic IS
+  'Which heuristic inferred this as a change output. Recorded because a
+   defence expert will challenge the inference, and "the tool said so" is
+   not an answer. Naming the heuristic makes the inference contestable and
+   therefore defensible.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- cospend_clusters : UTXO multi-input clustering result (FR-ING-003)
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE cospend_clusters (
+    id                      UUID PRIMARY KEY,
+    chain_id                SMALLINT NOT NULL REFERENCES chains(id),
+    member_count            INT NOT NULL,
+    representative_addr_id  UUID NOT NULL,
+    heuristic_version       TEXT NOT NULL,
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ingest_run_id           UUID NOT NULL
+);
+
+CREATE TABLE cospend_cluster_members (
+    cluster_id              UUID NOT NULL REFERENCES cospend_clusters(id),
+    address_id              UUID NOT NULL,
+    evidence_tx_hash        BYTEA NOT NULL,
+    PRIMARY KEY (cluster_id, address_id)
+);
+CREATE INDEX ix_cospend_member_addr ON cospend_cluster_members(address_id);
+
+COMMENT ON TABLE cospend_clusters IS
+  'Co-spend clustering is an INFERENCE, not a fact. It is stored separately
+   from transfers so a dossier can present it as "heuristic linkage with
+   stated assumptions" rather than as ledger truth. CoinJoin and PayJoin
+   transactions violate the co-spend assumption; the heuristic_version field
+   records which exclusion rules were applied.';
+
+
+═════════════════════════════════════════════════════════════════════════════
+8.  POSTGRESQL — PROVENANCE & CROSS-VALIDATION
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE data_providers (
+    id                      SMALLINT PRIMARY KEY,
+    provider_key            TEXT NOT NULL UNIQUE,  -- etherscan, alchemy,
+                                                   -- blockchair, mempool_space,
+                                                   -- bitquery, dune, selfnode
+    display_name            TEXT NOT NULL,
+    base_url                TEXT NOT NULL,
+    supported_chain_ids     SMALLINT[] NOT NULL,
+    rate_limit_per_sec      NUMERIC(8,3),
+    rate_limit_per_day      BIGINT,
+    is_self_hosted          BOOLEAN NOT NULL DEFAULT FALSE,
+    leaks_query_interest    BOOLEAN NOT NULL DEFAULT TRUE,
+    is_enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+    priority_rank           SMALLINT NOT NULL DEFAULT 100
+);
+
+COMMENT ON COLUMN data_providers.leaks_query_interest IS
+  'TRUE for any third-party API: querying it discloses which addresses are
+   under investigation. OPSEC mode (PRD SR-014) restricts ingestion to
+   providers where this is FALSE.';
+
+CREATE TABLE provider_health (
+    id                      UUID PRIMARY KEY,
+    provider_id             SMALLINT NOT NULL REFERENCES data_providers(id),
+    window_start            TIMESTAMPTZ NOT NULL,
+    window_end              TIMESTAMPTZ NOT NULL,
+    request_count           BIGINT NOT NULL DEFAULT 0,
+    success_count           BIGINT NOT NULL DEFAULT 0,
+    error_count             BIGINT NOT NULL DEFAULT 0,
+    timeout_count           BIGINT NOT NULL DEFAULT 0,
+    disagreement_count      BIGINT NOT NULL DEFAULT 0,
+    p50_latency_ms          INT,
+    p95_latency_ms          INT,
+    health_score            NUMERIC(4,3),
+    UNIQUE (provider_id, window_start)
+);
+CREATE INDEX ix_provider_health_recent
+    ON provider_health(provider_id, window_start DESC);
+
+COMMENT ON COLUMN provider_health.disagreement_count IS
+  'A rising disagreement rate is the primary signal of a compromised or
+   malfunctioning provider. PRD EI-007 requires automatic demotion.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- transaction_sources : one row per (transaction, provider). The evidence
+-- that cross-validation actually happened.
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE transaction_sources (
+    id                      UUID PRIMARY KEY,
+    chain_id                SMALLINT NOT NULL,
+    transaction_id          UUID NOT NULL,
+    tx_hash                 BYTEA NOT NULL,
+    provider_id             SMALLINT NOT NULL REFERENCES data_providers(id),
+    fetched_at              TIMESTAMPTZ NOT NULL,
+    http_status             INT,
+    response_digest         BYTEA NOT NULL,   -- sha256 of the raw response
+    canonical_digest        BYTEA NOT NULL,   -- sha256 of normalised fields
+    raw_payload_object_key  TEXT,             -- object store ref, optional
+    agrees_with_consensus   BOOLEAN,
+    disagreement_fields     TEXT[],
+    ingest_run_id           UUID NOT NULL,
+    UNIQUE (chain_id, tx_hash, provider_id, fetched_at)
+);
+CREATE INDEX ix_txsrc_tx ON transaction_sources(chain_id, tx_hash);
+CREATE INDEX ix_txsrc_disagree ON transaction_sources(provider_id)
+    WHERE agrees_with_consensus = FALSE;
+
+CREATE TABLE ingest_runs (
+    id                      UUID PRIMARY KEY,
+    trace_id                UUID,
+    triggered_by            UUID REFERENCES users(id),
+    trigger_kind            TEXT NOT NULL,  -- TRACE | REVALIDATION | BACKFILL
+    chain_id                SMALLINT REFERENCES chains(id),
+    started_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at             TIMESTAMPTZ,
+    addresses_touched       INT NOT NULL DEFAULT 0,
+    transactions_ingested   INT NOT NULL DEFAULT 0,
+    transfers_ingested      INT NOT NULL DEFAULT 0,
+    provider_calls          INT NOT NULL DEFAULT 0,
+    conflicts_detected      INT NOT NULL DEFAULT 0,
+    status                  TEXT NOT NULL DEFAULT 'RUNNING',
+    error_detail            JSONB
+);
+CREATE INDEX ix_ingest_runs_trace ON ingest_runs(trace_id);
+
+
+═════════════════════════════════════════════════════════════════════════════
+9.  POSTGRESQL — TEMPORAL ANALYSIS ARTEFACTS
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE temporal_profiles (
+    id                      UUID PRIMARY KEY,
+    address_id              UUID NOT NULL,
+    chain_id                SMALLINT NOT NULL,
+    trace_id                UUID,               -- NULL if computed globally
+    model_version_id        UUID NOT NULL,
+
+    -- Hawkes parameters: lambda(t) = mu + SUM alpha * exp(-beta*(t - t_i))
+    hawkes_mu               DOUBLE PRECISION,   -- background intensity
+    hawkes_alpha            DOUBLE PRECISION,   -- excitation magnitude
+    hawkes_beta             DOUBLE PRECISION,   -- decay rate
+    branching_ratio         DOUBLE PRECISION,   -- alpha/beta; >=1 => explosive
+    log_likelihood          DOUBLE PRECISION,
+    fit_event_count         INT NOT NULL,
+    fit_window_start        TIMESTAMPTZ,
+    fit_window_end          TIMESTAMPTZ,
+
+    dominant_pattern        temporal_pattern_t NOT NULL,
+    pattern_scores          JSONB NOT NULL,     -- {"PEEL_CHAIN":0.81,...}
+    burst_count             INT NOT NULL DEFAULT 0,
+    median_interarrival_s   DOUBLE PRECISION,
+    interarrival_cv         DOUBLE PRECISION,   -- coeff. of variation
+
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    parameters_json         JSONB NOT NULL,     -- full hyperparameter set
+
+    CONSTRAINT ck_branching CHECK (
+        branching_ratio IS NULL OR branching_ratio >= 0)
+);
+CREATE INDEX ix_temporal_addr ON temporal_profiles(address_id, computed_at DESC);
+CREATE INDEX ix_temporal_trace ON temporal_profiles(trace_id);
+CREATE INDEX ix_temporal_pattern ON temporal_profiles(dominant_pattern);
+
+COMMENT ON COLUMN temporal_profiles.branching_ratio IS
+  'alpha/beta. Values approaching or exceeding 1 indicate a self-sustaining
+   cascade — the statistical signature of automated peel chains and
+   structuring. Values near 0 indicate background-dominated organic activity.
+   Stored explicitly so the dossier can state the numeric basis for a
+   "bot-driven" claim rather than asserting it.';
+
+COMMENT ON COLUMN temporal_profiles.fit_event_count IS
+  'A Hawkes fit on fewer than ~30 events is not trustworthy. Below the
+   configured minimum, dominant_pattern is set to INSUFFICIENT_DATA rather
+   than reporting a confident-looking but meaningless fit.';
+
+CREATE TABLE temporal_bursts (
+    id                      UUID PRIMARY KEY,
+    temporal_profile_id     UUID NOT NULL REFERENCES temporal_profiles(id),
+    burst_start_at          TIMESTAMPTZ NOT NULL,
+    burst_end_at            TIMESTAMPTZ NOT NULL,
+    event_count             INT NOT NULL,
+    peak_intensity          DOUBLE PRECISION,
+    total_value_base        NUMERIC(78,0),
+    pattern                 temporal_pattern_t NOT NULL,
+    CONSTRAINT ck_burst_window CHECK (burst_end_at >= burst_start_at)
+);
+CREATE INDEX ix_bursts_profile ON temporal_bursts(temporal_profile_id);
+
+
+═════════════════════════════════════════════════════════════════════════════
+10.  POSTGRESQL — CLASSIFICATION ARTEFACTS
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE address_classifications (
+    id                      UUID PRIMARY KEY,
+    address_id              UUID NOT NULL,
+    chain_id                SMALLINT NOT NULL,
+    trace_id                UUID,               -- NULL = global background job
+
+    predicted_class         node_class_t NOT NULL,
+    class_probabilities     JSONB NOT NULL,     -- full vector, FR-CLS-004
+    max_probability         NUMERIC(5,4) NOT NULL,
+    is_abstained            BOOLEAN NOT NULL DEFAULT FALSE,
+    is_absorption_state     BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- model lineage
+    hgt_model_version_id    UUID,
+    rgcn_model_version_id   UUID,
+    tgn_model_version_id    UUID,
+    calibrator_version_id   UUID,
+    feature_set_version     TEXT NOT NULL,
+
+    -- corroborating independent signals, kept SEPARATE from the model score
+    bytecode_signature_id   UUID REFERENCES contract_signatures(id),
+    registry_match_vasp_id  UUID,               -- FK to vasp_entities
+    external_label_source   TEXT,               -- OFAC | public tag set | etc
+
+    -- explainability (FR-OBS/US-OBS-017)
+    top_features            JSONB,              -- [{feature, contribution}]
+    attention_summary       JSONB,              -- per-relation attention mass
+
+    -- human override (US-CLS-008)
+    is_human_override       BOOLEAN NOT NULL DEFAULT FALSE,
+    overridden_from_class   node_class_t,
+    override_justification  TEXT,
+    overridden_by           UUID REFERENCES users(id),
+    overridden_at           TIMESTAMPTZ,
+
+    superseded_by_id        UUID REFERENCES address_classifications(id),
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_cls_prob CHECK (max_probability BETWEEN 0 AND 1),
+    CONSTRAINT ck_cls_abstain CHECK (
+        (is_abstained = FALSE) OR (predicted_class = 'UNKNOWN')),
+    CONSTRAINT ck_cls_override CHECK (
+        (is_human_override = FALSE) OR
+        (override_justification IS NOT NULL
+         AND length(override_justification) >= 20
+         AND overridden_by IS NOT NULL
+         AND overridden_from_class IS NOT NULL))
+);
+
+CREATE INDEX ix_cls_address_current ON address_classifications(address_id)
+    WHERE superseded_by_id IS NULL;
+CREATE INDEX ix_cls_trace ON address_classifications(trace_id);
+CREATE INDEX ix_cls_class ON address_classifications(predicted_class)
+    WHERE superseded_by_id IS NULL;
+CREATE INDEX ix_cls_absorption ON address_classifications(address_id)
+    WHERE is_absorption_state AND superseded_by_id IS NULL;
+CREATE INDEX ix_cls_overrides ON address_classifications(overridden_by)
+    WHERE is_human_override;
+
+COMMENT ON TABLE address_classifications IS
+  'Append-only and versioned via superseded_by_id. A newer model NEVER
+   mutates an existing row, because a dossier already generated cites a
+   specific classification row id and must remain reproducible forever
+   (PRD FR-CLS-007, MG-006).';
+
+COMMENT ON COLUMN address_classifications.bytecode_signature_id IS
+  'Independent corroboration kept structurally separate from the learned
+   score, per FR-CLS-006. Folding a deterministic signature match into a
+   model probability would make the resulting number uninterpretable.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- classification_label_candidates : override → training label pipeline
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE classification_label_candidates (
+    id                      UUID PRIMARY KEY,
+    classification_id       UUID NOT NULL REFERENCES address_classifications(id),
+    proposed_label          node_class_t NOT NULL,
+    proposed_by             UUID NOT NULL REFERENCES users(id),
+    proposed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    curator_status          TEXT NOT NULL DEFAULT 'PENDING', -- APPROVED |
+                                                             -- REJECTED
+    curator_id              UUID REFERENCES users(id),
+    curator_note            TEXT,
+    reviewed_at             TIMESTAMPTZ,
+    included_in_dataset     TEXT       -- dataset version if accepted
+);
+
+COMMENT ON TABLE classification_label_candidates IS
+  'PRD RSK-011: without this curator gate, the model would train on its own
+   corrected mistakes in a closed feedback loop, silently learning the biases
+   of whichever analyst overrode most often.';
+
+
+═════════════════════════════════════════════════════════════════════════════
+11.  POSTGRESQL — TRACE, PATH & CONFIDENCE
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE traces (
+    id                      UUID PRIMARY KEY,
+    case_id                 UUID NOT NULL REFERENCES cases(id),
+    seed_address_id         UUID NOT NULL,
+    chain_id                SMALLINT NOT NULL REFERENCES chains(id),
+    launched_by             UUID NOT NULL REFERENCES users(id),
+
+    status                  trace_status_t NOT NULL DEFAULT 'QUEUED',
+    termination_reason      TEXT,       -- ABSORPTION | MAX_DEPTH |
+                                        -- VALUE_FLOOR | TIME_BUDGET |
+                                        -- OBFUSCATOR | NO_PATH | ERROR
+
+    -- REPRODUCIBILITY BLOCK (PRD principle P4) -----------------------------
+    graph_snapshot_id       UUID NOT NULL,
+    rng_seed                BIGINT NOT NULL,
+    parameter_set           JSONB NOT NULL,
+    model_version_pins      JSONB NOT NULL,     -- {"hgt":"...","tgn":"..."}
+    engine_version          TEXT NOT NULL,      -- git sha of the engine
+    -----------------------------------------------------------------------
+
+    max_depth               INT NOT NULL DEFAULT 12,
+    top_k_paths             INT NOT NULL DEFAULT 3,
+    value_floor_fraction    NUMERIC(5,4) NOT NULL DEFAULT 0.0100,
+    time_budget_ms          INT NOT NULL DEFAULT 300000,
+    pruning_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    opsec_mode              BOOLEAN NOT NULL DEFAULT FALSE,
+
+    nodes_expanded          INT,
+    edges_examined          BIGINT,
+    provider_calls          INT,
+    cache_hit_ratio         NUMERIC(5,4),
+
+    queued_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at              TIMESTAMPTZ,
+    completed_at            TIMESTAMPTZ,
+    duration_ms             INT,
+    error_detail            JSONB,
+
+    parent_trace_id         UUID REFERENCES traces(id),  -- for re-runs
+    rerun_reason            TEXT,
+
+    CONSTRAINT ck_trace_depth CHECK (max_depth BETWEEN 1 AND 30),
+    CONSTRAINT ck_trace_topk CHECK (top_k_paths BETWEEN 1 AND 10)
+);
+
+CREATE INDEX ix_traces_case ON traces(case_id, queued_at DESC);
+CREATE INDEX ix_traces_status ON traces(status)
+    WHERE status NOT IN ('COMPLETED','FAILED','CANCELLED');
+CREATE INDEX ix_traces_seed ON traces(seed_address_id);
+
+COMMENT ON COLUMN traces.model_version_pins IS
+  'Pinned forever. A promoted model must never retroactively change a
+   completed trace. When a defence expert asks the system to reproduce a
+   two-year-old trace, these pins are what make that possible.';
+
+COMMENT ON COLUMN traces.rng_seed IS
+  'Monte Carlo confidence scoring is stochastic. Without a stored seed the
+   system cannot reproduce its own number, which would be fatal under
+   cross-examination.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- trace_stages : per-stage timings and outcomes (drives the live progress UI)
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE trace_stages (
+    id                      UUID PRIMARY KEY,
+    trace_id                UUID NOT NULL REFERENCES traces(id),
+    stage_name              TEXT NOT NULL,   -- INGEST | PRUNE | CLASSIFY |
+                                             -- SEARCH | SCORE | SEAL
+    stage_order             SMALLINT NOT NULL,
+    status                  TEXT NOT NULL,   -- PENDING|RUNNING|OK|FAILED|SKIPPED
+    started_at              TIMESTAMPTZ,
+    finished_at             TIMESTAMPTZ,
+    duration_ms             INT,
+    items_processed         INT,
+    metrics                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_detail            JSONB,
+    UNIQUE (trace_id, stage_name)
+);
+CREATE INDEX ix_trace_stages_trace ON trace_stages(trace_id, stage_order);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- trace_paths : one row per candidate attribution path
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE trace_paths (
+    id                      UUID PRIMARY KEY,
+    trace_id                UUID NOT NULL REFERENCES traces(id),
+    rank                    SMALLINT NOT NULL,          -- 1 = primary
+    hop_count               SMALLINT NOT NULL,
+
+    terminal_address_id     UUID NOT NULL,
+    terminal_class          node_class_t NOT NULL,
+    terminal_vasp_id        UUID,                       -- FK vasp_entities
+    jurisdiction            jurisdiction_t NOT NULL DEFAULT 'UNKNOWN_ENTITY',
+
+    traced_value_base       NUMERIC(78,0) NOT NULL,
+    traced_value_asset_id   UUID NOT NULL,
+    value_fraction_of_seed  NUMERIC(6,5),
+    attribution_method      TEXT NOT NULL,   -- PROPORTIONAL | FIFO | POISON
+    elapsed_onchain_seconds BIGINT,
+
+    crosses_chains          BOOLEAN NOT NULL DEFAULT FALSE,
+    crosses_mixer           BOOLEAN NOT NULL DEFAULT FALSE,
+    crosses_bridge          BOOLEAN NOT NULL DEFAULT FALSE,
+
+    is_selected             BOOLEAN NOT NULL DEFAULT FALSE,
+    selected_by             UUID REFERENCES users(id),
+    selected_at             TIMESTAMPTZ,
+
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (trace_id, rank),
+    CONSTRAINT ck_path_hops CHECK (hop_count > 0)
+);
+CREATE INDEX ix_paths_trace ON trace_paths(trace_id, rank);
+CREATE INDEX ix_paths_terminal ON trace_paths(terminal_address_id);
+CREATE INDEX ix_paths_vasp ON trace_paths(terminal_vasp_id)
+    WHERE terminal_vasp_id IS NOT NULL;
+
+COMMENT ON COLUMN trace_paths.attribution_method IS
+  'Proportional / FIFO / poison produce DIFFERENT answers on the same graph.
+   Naming the method in the data model (and in the dossier) pre-empts the
+   obvious cross-examination question (PRD OQ-07, FR-ATT-008).';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- trace_path_hops : the ordered hops, each anchored to real transfers
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE trace_path_hops (
+    id                      UUID PRIMARY KEY,
+    trace_path_id           UUID NOT NULL REFERENCES trace_paths(id),
+    hop_index               SMALLINT NOT NULL,          -- 0 = seed
+
+    from_address_id         UUID NOT NULL,
+    to_address_id           UUID NOT NULL,
+    chain_id                SMALLINT NOT NULL,
+
+    -- evidence anchors
+    transfer_id             UUID,
+    tx_hash                 BYTEA NOT NULL,
+    block_height            BIGINT NOT NULL,
+    block_timestamp         TIMESTAMPTZ NOT NULL,
+    asset_id                UUID NOT NULL,
+    value_base              NUMERIC(78,0) NOT NULL,
+
+    -- per-hop analytics
+    edge_weight             DOUBLE PRECISION,
+    time_decay_factor       DOUBLE PRECISION,
+    value_share             NUMERIC(6,5),
+    from_classification_id  UUID REFERENCES address_classifications(id),
+    to_classification_id    UUID REFERENCES address_classifications(id),
+    temporal_pattern        temporal_pattern_t,
+    validation_status       validation_status_t NOT NULL,
+    confirmations_observed  INT,
+
+    is_cross_chain_hop      BOOLEAN NOT NULL DEFAULT FALSE,
+    bridge_contract_addr_id UUID,
+    counterpart_chain_id    SMALLINT,
+
+    hop_note                TEXT,
+    UNIQUE (trace_path_id, hop_index)
+);
+CREATE INDEX ix_hops_path ON trace_path_hops(trace_path_id, hop_index);
+CREATE INDEX ix_hops_tx ON trace_path_hops(chain_id, tx_hash);
+
+COMMENT ON COLUMN trace_path_hops.confirmations_observed IS
+  'Recorded at trace time and printed in the dossier (PRD US-ING-004 AC4).
+   Proves the finality gate was actually applied to this specific hop.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- confidence_scores
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE confidence_scores (
+    id                      UUID PRIMARY KEY,
+    trace_path_id           UUID NOT NULL REFERENCES trace_paths(id),
+
+    point_estimate          NUMERIC(6,5) NOT NULL,      -- 0..1
+    ci_lower                NUMERIC(6,5) NOT NULL,
+    ci_upper                NUMERIC(6,5) NOT NULL,
+    ci_level                NUMERIC(4,3) NOT NULL DEFAULT 0.950,
+
+    mc_sample_count         INT NOT NULL,
+    mc_restart_probability  NUMERIC(4,3) NOT NULL,
+    mc_converged            BOOLEAN NOT NULL,
+    mc_seed                 BIGINT NOT NULL,
+
+    -- decomposition (FR-CNF-006)
+    factor_classification   NUMERIC(6,5),
+    factor_corroboration    NUMERIC(6,5),
+    factor_temporal         NUMERIC(6,5),
+    factor_path_length      NUMERIC(6,5),
+    factor_obfuscation      NUMERIC(6,5),
+    factor_json             JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+    calibrator_version_id   UUID,
+    meets_action_threshold  BOOLEAN NOT NULL,
+    action_threshold_used   NUMERIC(4,3) NOT NULL,
+
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_conf_range CHECK (point_estimate BETWEEN 0 AND 1),
+    CONSTRAINT ck_conf_ci    CHECK (ci_lower <= point_estimate
+                                AND point_estimate <= ci_upper),
+    CONSTRAINT ck_conf_samples CHECK (mc_sample_count >= 1000)
+);
+CREATE UNIQUE INDEX ux_conf_path ON confidence_scores(trace_path_id);
+
+COMMENT ON CONSTRAINT ck_conf_samples ON confidence_scores IS
+  'A Monte Carlo estimate from fewer than 1000 samples has a credible
+   interval too wide to be useful and invites a "you guessed" challenge.
+   Enforced at the schema level so no configuration mistake can bypass it.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- obfuscation_correlations : mixer-termination candidate withdrawals
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE obfuscation_correlations (
+    id                      UUID PRIMARY KEY,
+    trace_id                UUID NOT NULL REFERENCES traces(id),
+    obfuscator_address_id   UUID NOT NULL,
+    obfuscator_kind         node_class_t NOT NULL,     -- MIXER | BRIDGE
+    deposit_tx_hash         BYTEA NOT NULL,
+    deposit_at              TIMESTAMPTZ NOT NULL,
+    deposit_value_base      NUMERIC(78,0) NOT NULL,
+    deposit_asset_id        UUID NOT NULL,
+
+    candidate_address_id    UUID NOT NULL,
+    candidate_tx_hash       BYTEA NOT NULL,
+    candidate_at            TIMESTAMPTZ NOT NULL,
+    candidate_value_base    NUMERIC(78,0) NOT NULL,
+
+    time_delta_seconds      BIGINT NOT NULL,
+    denomination_match      BOOLEAN NOT NULL,
+    correlation_score       NUMERIC(6,5) NOT NULL,
+    anonymity_set_estimate  INT,
+    is_actionable           BOOLEAN NOT NULL DEFAULT FALSE,
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_corr_score CHECK (correlation_score BETWEEN 0 AND 1)
+);
+CREATE INDEX ix_obf_corr_trace ON obfuscation_correlations(trace_id,
+    correlation_score DESC);
+
+COMMENT ON COLUMN obfuscation_correlations.anonymity_set_estimate IS
+  'The size of the pool the deposit is hiding in. This number is what makes
+   the correlation score honest: a 0.2 score against an anonymity set of 3
+   means something very different from 0.2 against a set of 5000, and the
+   dossier must show both (PRD Journey B).';
+
+
+═════════════════════════════════════════════════════════════════════════════
+12.  POSTGRESQL — MERKLE PROOFS & EVIDENCE
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE merkle_proofs (
+    id                      UUID PRIMARY KEY,
+    chain_id                SMALLINT NOT NULL REFERENCES chains(id),
+    tx_hash                 BYTEA NOT NULL,
+    block_height            BIGINT NOT NULL,
+    block_hash              BYTEA NOT NULL,
+    merkle_root             BYTEA,
+
+    proof_kind              proof_kind_t NOT NULL,
+    hash_algorithm          TEXT NOT NULL,   -- 'SHA256D' | 'KECCAK256'
+    leaf_hash               BYTEA NOT NULL,
+    leaf_index              INT,
+
+    -- sibling path with explicit ordering. Order matters: concatenating
+    -- (sibling||current) vs (current||sibling) yields different roots.
+    proof_path              JSONB NOT NULL,
+    -- [{ "position": "LEFT"|"RIGHT", "hash": "<hex>" }, ...]
+    proof_depth             SMALLINT NOT NULL,
+
+    verification_status     proof_status_t NOT NULL DEFAULT 'PENDING',
+    verified_at             TIMESTAMPTZ,
+    verified_root           BYTEA,
+    verification_note       TEXT,
+
+    alternative_mechanism   TEXT,   -- populated when proof_kind is not a
+                                    -- classic Merkle proof (see §12.4)
+
+    source_provider_id      SMALLINT REFERENCES data_providers(id),
+    fetched_at              TIMESTAMPTZ NOT NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (chain_id, tx_hash, proof_kind),
+    CONSTRAINT ck_proof_depth CHECK (proof_depth >= 0),
+    CONSTRAINT ck_proof_alt CHECK (
+        proof_kind <> 'HEADER_ANCHORED_DIGEST'
+        OR alternative_mechanism IS NOT NULL)
+);
+CREATE INDEX ix_merkle_tx ON merkle_proofs(chain_id, tx_hash);
+CREATE INDEX ix_merkle_failed ON merkle_proofs(chain_id)
+    WHERE verification_status = 'FAILED';
+
+-- §12.4  HONEST PROOF SEMANTICS — read this before implementing.
+--
+-- COMMENT ON TABLE merkle_proofs:
+COMMENT ON TABLE merkle_proofs IS
+  'Per-chain proof semantics differ and MUST NOT be conflated:
+   • BITCOIN / TRON — a genuine transaction Merkle branch under the block
+     header merkle_root. This is a true inclusion proof.
+   • ETHEREUM / BNB / POLYGON — the block header commits to a
+     Merkle-Patricia transactions/receipts trie, not a plain Merkle tree.
+     The proof is an MPT branch. Calling it a "Merkle proof" loosely is
+     acceptable in prose; storing it with the wrong proof_kind is not.
+   • SOLANA — has no per-transaction Merkle inclusion proof of the Bitcoin
+     kind. proof_kind = SOLANA_ENTRY_ATTESTATION and alternative_mechanism
+     MUST describe what is actually being asserted.
+   PRD US-EVD-009 AC3 requires the dossier to state the alternative
+   mechanism honestly rather than present a misleading proof. This column
+   design forces that honesty at the schema level.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- evidence_items : the immutable evidence ledger
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE evidence_items (
+    id                      UUID PRIMARY KEY,
+    case_id                 UUID NOT NULL REFERENCES cases(id),
+    trace_id                UUID REFERENCES traces(id),
+    trace_path_hop_id       UUID REFERENCES trace_path_hops(id),
+
+    evidence_kind           TEXT NOT NULL,  -- TRANSACTION | CLASSIFICATION |
+                                            -- TEMPORAL_PROFILE | CORRELATION |
+                                            -- REGISTRY_MATCH | ATTACHMENT
+    chain_id                SMALLINT,
+    tx_hash                 BYTEA,
+    merkle_proof_id         UUID REFERENCES merkle_proofs(id),
+
+    content_digest          BYTEA NOT NULL,     -- sha256 of the item payload
+    payload_snapshot        JSONB NOT NULL,     -- frozen copy at seal time
+    object_key              TEXT,               -- large payloads to object store
+
+    collected_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    collected_by            UUID REFERENCES users(id),
+    collection_method       TEXT NOT NULL,      -- AUTOMATED_INGEST |
+                                                -- MANUAL_UPLOAD | API_FETCH
+    sealed_at               TIMESTAMPTZ,
+
+    CONSTRAINT ck_evidence_digest CHECK (octet_length(content_digest) = 32)
+);
+CREATE INDEX ix_evidence_case ON evidence_items(case_id);
+CREATE INDEX ix_evidence_trace ON evidence_items(trace_id);
+CREATE INDEX ix_evidence_tx ON evidence_items(chain_id, tx_hash)
+    WHERE tx_hash IS NOT NULL;
+
+COMMENT ON COLUMN evidence_items.payload_snapshot IS
+  'A FROZEN copy of the item as it stood when sealed. Deliberate
+   denormalisation: if a source row is later corrected, the dossier must
+   still show exactly what the officer relied upon at signing time.
+   Chain of custody demands the snapshot, not a live join.';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- chain_of_custody : every access to an evidence item
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE chain_of_custody (
+    id                      BIGSERIAL PRIMARY KEY,
+    evidence_item_id        UUID NOT NULL REFERENCES evidence_items(id),
+    actor_user_id           UUID REFERENCES users(id),
+    actor_kind              actor_kind_t NOT NULL,
+    action                  TEXT NOT NULL,  -- COLLECTED | ACCESSED |
+                                            -- TRANSFORMED | SEALED |
+                                            -- EXPORTED | VERIFIED
+    transformation_detail   JSONB,
+    source_ip               INET,
+    occurred_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_custody_item ON chain_of_custody(evidence_item_id, occurred_at);
+
+REVOKE UPDATE, DELETE ON chain_of_custody FROM PUBLIC;
+
+
+═════════════════════════════════════════════════════════════════════════════
+13.  POSTGRESQL — VASP REGISTRY (bitemporal)
+═════════════════════════════════════════════════════════════════════════════
+
+-- Bitemporal because two different questions must both be answerable:
+--   "Is exchange X FIU-registered TODAY?"           → system time
+--   "Was it registered on the DATE OF THE OFFENCE?" → valid time
+-- A single-temporal registry cannot answer the second, and the second is
+-- the one a defence counsel will ask.
+
+CREATE TABLE vasp_entities (
+    id                      UUID PRIMARY KEY,
+    legal_name              TEXT NOT NULL,
+    trading_name            TEXT,
+    entity_type             TEXT NOT NULL,  -- EXCHANGE | CUSTODIAN |
+                                            -- BROKER | PAYMENT_PROCESSOR
+    country_code            CHAR(2) NOT NULL,
+    website                 TEXT,
+    is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_vasp_name_trgm ON vasp_entities USING gin (legal_name gin_trgm_ops);
+
+CREATE TABLE vasp_registrations (
+    id                      UUID PRIMARY KEY,
+    vasp_entity_id          UUID NOT NULL REFERENCES vasp_entities(id),
+    registry_authority      TEXT NOT NULL,   -- FIU_IND | FINCEN | FCA | MAS
+    registration_id         TEXT,
+    jurisdiction            jurisdiction_t NOT NULL,
+    is_sahyog_onboarded     BOOLEAN NOT NULL DEFAULT FALSE,
+    sahyog_onboarded_at     DATE,
+    accepts_legal_basis     legal_basis_t[] NOT NULL DEFAULT '{}',
+
+    -- valid time (real-world truth)
+    valid_from              DATE NOT NULL,
+    valid_to                DATE,
+    -- system time (when we recorded it)
+    recorded_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    superseded_at           TIMESTAMPTZ,
+
+    source_reference        TEXT NOT NULL,   -- URL / document citation
+    source_verified_on      DATE NOT NULL,
+    recorded_by             UUID NOT NULL REFERENCES users(id),
+
+    CONSTRAINT ck_vasp_valid_window CHECK (valid_to IS NULL OR valid_to > valid_from)
+);
+CREATE INDEX ix_vaspreg_entity ON vasp_registrations(vasp_entity_id)
+    WHERE superseded_at IS NULL;
+CREATE INDEX ix_vaspreg_valid ON vasp_registrations(valid_from, valid_to);
+
+COMMENT ON COLUMN vasp_registrations.source_verified_on IS
+  'PRD §0.5 statistics policy applied to the registry: no registration status
+   is stored without a citation and a human verification date. The count of
+   FIU-registered VDA SPs changes; a hardcoded number would be wrong within
+   a quarter.';
+
+CREATE TABLE vasp_nodal_officers (
+    id                      UUID PRIMARY KEY,
+    vasp_entity_id          UUID NOT NULL REFERENCES vasp_entities(id),
+    officer_name            TEXT NOT NULL,
+    designation             TEXT,
+    official_email          TEXT,
+    phone                   TEXT,
+    postal_address          TEXT,
+    preferred_channel       TEXT NOT NULL,   -- SAHYOG | EMAIL | PORTAL | POST
+    sahyog_endpoint_ref     TEXT,
+    is_primary              BOOLEAN NOT NULL DEFAULT FALSE,
+    valid_from              DATE NOT NULL,
+    valid_to                DATE,
+    source_reference        TEXT NOT NULL,
+    recorded_by             UUID NOT NULL REFERENCES users(id),
+    recorded_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_nodal_vasp ON vasp_nodal_officers(vasp_entity_id)
+    WHERE valid_to IS NULL;
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- vasp_addresses : known deposit/hot/cold addresses attributed to a VASP
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE vasp_addresses (
+    id                      UUID PRIMARY KEY,
+    vasp_entity_id          UUID NOT NULL REFERENCES vasp_entities(id),
+    address_id              UUID NOT NULL,
+    chain_id                SMALLINT NOT NULL,
+    address_role            node_class_t NOT NULL,   -- VASP_DEPOSIT/HOT/COLD
+    attribution_source      TEXT NOT NULL,  -- VASP_DISCLOSED | PUBLIC_TAG |
+                                            -- HEURISTIC | CASE_CONFIRMED
+    attribution_confidence  NUMERIC(4,3) NOT NULL,
+    evidence_reference      TEXT,
+    valid_from              DATE NOT NULL,
+    valid_to                DATE,
+    recorded_by             UUID NOT NULL REFERENCES users(id),
+    recorded_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (address_id, vasp_entity_id, valid_from),
+    CONSTRAINT ck_vaspaddr_conf CHECK (attribution_confidence BETWEEN 0 AND 1)
+);
+CREATE INDEX ix_vaspaddr_address ON vasp_addresses(address_id)
+    WHERE valid_to IS NULL;
+CREATE INDEX ix_vaspaddr_vasp ON vasp_addresses(vasp_entity_id);
+
+COMMENT ON COLUMN vasp_addresses.attribution_source IS
+  'CASE_CONFIRMED entries — where a VASP responded to a disclosure request
+   and confirmed the address is theirs — are the highest-quality labels the
+   system will ever obtain. They are the seed corpus for production
+   fine-tuning (PRD DR-007).';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- bridge_index : cross-chain shard stitching (FR-GRF-003)
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE bridge_index (
+    id                      UUID PRIMARY KEY,
+    bridge_protocol         TEXT NOT NULL,   -- STARGATE | WORMHOLE | CBRIDGE
+    source_chain_id         SMALLINT NOT NULL REFERENCES chains(id),
+    source_address_id       UUID NOT NULL,
+    dest_chain_id           SMALLINT NOT NULL REFERENCES chains(id),
+    dest_address_id         UUID NOT NULL,
+    correlation_method      TEXT NOT NULL,   -- EVENT_LOG | NONCE_MATCH |
+                                             -- AMOUNT_TIME | GUARDIAN_VAA
+    typical_latency_seconds INT,
+    is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+    source_reference        TEXT NOT NULL,
+    recorded_by             UUID NOT NULL REFERENCES users(id),
+    recorded_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (source_chain_id, source_address_id, dest_chain_id, dest_address_id)
+);
+CREATE INDEX ix_bridge_source ON bridge_index(source_chain_id, source_address_id)
+    WHERE is_active;
+
+COMMENT ON TABLE bridge_index IS
+  'This table is what turns a cross-chain hop from a dead end into a typed
+   edge. Correlating a specific bridge-in with a specific bridge-out is
+   NOT always deterministic — correlation_method records how it was done
+   so the confidence engine can weight the hop accordingly.';
+
+
+═════════════════════════════════════════════════════════════════════════════
+14.  POSTGRESQL — DOSSIERS & LEGAL INSTRUMENTS
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE dossiers (
+    id                      UUID PRIMARY KEY,
+    case_id                 UUID NOT NULL REFERENCES cases(id),
+    trace_id                UUID NOT NULL REFERENCES traces(id),
+    trace_path_id           UUID NOT NULL REFERENCES trace_paths(id),
+
+    dossier_number          TEXT NOT NULL UNIQUE,
+    version                 INT NOT NULL DEFAULT 1,
+    supersedes_dossier_id   UUID REFERENCES dossiers(id),
+    supersede_reason        TEXT,
+
+    template_version        TEXT NOT NULL,
+    language                TEXT NOT NULL DEFAULT 'en',
+
+    -- content integrity
+    pdf_object_key          TEXT NOT NULL,
+    pdf_sha256              BYTEA NOT NULL,
+    pdf_size_bytes          BIGINT NOT NULL,
+    json_bundle_object_key  TEXT,
+    json_bundle_sha256      BYTEA,
+
+    -- statutory certificate block
+    certificate_form        TEXT NOT NULL,   -- SEC_63_BSA | SEC_65B_IEA
+    certifying_user_id      UUID REFERENCES users(id),
+    certifying_rank         TEXT,
+    certified_at            TIMESTAMPTZ,
+
+    -- pinned analytics summary
+    confidence_at_generation NUMERIC(6,5) NOT NULL,
+    hop_count               SMALLINT NOT NULL,
+    evidence_item_count     INT NOT NULL,
+    proofs_verified_count   INT NOT NULL,
+    proofs_failed_count     INT NOT NULL DEFAULT 0,
+
+    is_superseded           BOOLEAN NOT NULL DEFAULT FALSE,
+    invalidated_at          TIMESTAMPTZ,
+    invalidation_reason     TEXT,     -- e.g. 'REORG_DETECTED'
+
+    generated_by            UUID NOT NULL REFERENCES users(id),
+    generated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_dossier_hash CHECK (octet_length(pdf_sha256) = 32),
+    CONSTRAINT ck_dossier_supersede CHECK (
+        (supersedes_dossier_id IS NULL) = (supersede_reason IS NULL))
+);
+CREATE INDEX ix_dossiers_case ON dossiers(case_id, generated_at DESC);
+CREATE INDEX ix_dossiers_invalid ON dossiers(case_id)
+    WHERE invalidated_at IS NOT NULL;
+
+COMMENT ON COLUMN dossiers.proofs_failed_count IS
+  'Printed on the dossier cover page. A dossier with failed proofs is not
+   suppressed — it is generated with the failure stated, because concealing
+   a failed verification would be far worse than disclosing it.';
+
+CREATE TABLE dossier_evidence_items (
+    dossier_id              UUID NOT NULL REFERENCES dossiers(id),
+    evidence_item_id        UUID NOT NULL REFERENCES evidence_items(id),
+    display_order           INT NOT NULL,
+    section                 TEXT NOT NULL,
+    PRIMARY KEY (dossier_id, evidence_item_id)
+);
+
+CREATE TABLE dossier_signatures (
+    id                      UUID PRIMARY KEY,
+    dossier_id              UUID NOT NULL REFERENCES dossiers(id),
+    signer_user_id          UUID NOT NULL REFERENCES users(id),
+    signer_role             TEXT NOT NULL,
+    signature_algorithm     TEXT NOT NULL,   -- e.g. 'RSA-PSS-SHA256'
+    signature_value         BYTEA NOT NULL,
+    certificate_ref         TEXT NOT NULL,   -- HSM/PKI cert reference
+    signed_digest           BYTEA NOT NULL,
+    mfa_method              TEXT NOT NULL,
+    signed_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source_ip               INET NOT NULL
+);
+CREATE INDEX ix_dossier_sig ON dossier_signatures(dossier_id);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- disclosure_requests
+-- ───────────────────────────────────────────────────────────────────────────
+CREATE TABLE disclosure_requests (
+    id                      UUID PRIMARY KEY,
+    case_id                 UUID NOT NULL REFERENCES cases(id),
+    dossier_id              UUID NOT NULL REFERENCES dossiers(id),
+    trace_path_id           UUID NOT NULL REFERENCES trace_paths(id),
+    vasp_entity_id          UUID NOT NULL REFERENCES vasp_entities(id),
+    nodal_officer_id        UUID REFERENCES vasp_nodal_officers(id),
+
+    request_reference       TEXT NOT NULL UNIQUE,
+    legal_basis             legal_basis_t NOT NULL,
+    status                  disclosure_status_t NOT NULL DEFAULT 'DRAFT',
+
+    target_address_id       UUID NOT NULL,
+    target_tx_hashes        BYTEA[] NOT NULL,
+    time_window_start       TIMESTAMPTZ NOT NULL,
+    time_window_end         TIMESTAMPTZ NOT NULL,
+    requested_data_types    TEXT[] NOT NULL,  -- KYC | IP_LOGS | LINKED_BANK |
+                                              -- DEVICE_FINGERPRINT | BALANCE
+    freeze_requested        BOOLEAN NOT NULL DEFAULT FALSE,
+    freeze_amount_base      NUMERIC(78,0),
+
+    scope_check_passed      BOOLEAN NOT NULL DEFAULT FALSE,
+    scope_check_detail      JSONB,
+
+    -- dispatch
+    is_mock_environment     BOOLEAN NOT NULL DEFAULT TRUE,
+    sahyog_submission_id    TEXT,
+    idempotency_key         TEXT NOT NULL UNIQUE,
+    submitted_at            TIMESTAMPTZ,
+    acknowledged_at         TIMESTAMPTZ,
+    responded_at            TIMESTAMPTZ,
+    sla_due_at              TIMESTAMPTZ,
+
+    approved_by             UUID REFERENCES users(id),
+    approved_at             TIMESTAMPTZ,
+
+    created_by              UUID NOT NULL REFERENCES users(id),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_disc_window CHECK (time_window_end > time_window_start),
+    CONSTRAINT ck_disc_targets CHECK (array_length(target_tx_hashes,1) >= 1),
+    CONSTRAINT ck_disc_dispatch_gate CHECK (
+        status NOT IN ('SIGNED','SUBMITTED','ACKNOWLEDGED','RESPONDED')
+        OR (approved_by IS NOT NULL AND scope_check_passed = TRUE))
+);
+CREATE INDEX ix_disc_case ON disclosure_requests(case_id);
+CREATE INDEX ix_disc_status ON disclosure_requests(status)
+    WHERE status NOT IN ('CLOSED','WITHDRAWN');
+CREATE INDEX ix_disc_sla ON disclosure_requests(sla_due_at)
+    WHERE status IN ('SUBMITTED','ACKNOWLEDGED');
+
+COMMENT ON CONSTRAINT ck_disc_dispatch_gate ON disclosure_requests IS
+  'Database-level enforcement of PRD LR-004 and LR-006: nothing reaches a
+   VASP without a human approver and a passed data-minimisation scope check.
+   Application-layer enforcement alone is insufficient for a control this
+   consequential.';
+
+COMMENT ON COLUMN disclosure_requests.is_mock_environment IS
+  'Defaults TRUE. The UI renders a persistent MOCK banner while this is set
+   (PRD US-SHY-011 AC5). Flipping it to FALSE is an admin action requiring a
+   configured production SAHYOG endpoint.';
+
+CREATE TABLE disclosure_request_fields (
+    id                      UUID PRIMARY KEY,
+    disclosure_request_id   UUID NOT NULL REFERENCES disclosure_requests(id),
+    field_key               TEXT NOT NULL,
+    machine_value           TEXT,
+    final_value             TEXT,
+    was_edited              BOOLEAN NOT NULL DEFAULT FALSE,
+    edited_by               UUID REFERENCES users(id),
+    edited_at               TIMESTAMPTZ,
+    provenance              JSONB NOT NULL,  -- which table/row supplied it
+    UNIQUE (disclosure_request_id, field_key)
+);
+
+COMMENT ON TABLE disclosure_request_fields IS
+  'Every auto-filled field keeps BOTH the machine proposal and the final
+   human value (PRD US-SHY-011 AC2). If an officer edits a field, the diff is
+   part of the record — this protects the officer as much as the system.';
+
+CREATE TABLE disclosure_request_events (
+    id                      BIGSERIAL PRIMARY KEY,
+    disclosure_request_id   UUID NOT NULL REFERENCES disclosure_requests(id),
+    from_status             disclosure_status_t,
+    to_status               disclosure_status_t NOT NULL,
+    actor_user_id           UUID REFERENCES users(id),
+    actor_kind              actor_kind_t NOT NULL,
+    detail                  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_disc_events ON disclosure_request_events(
+    disclosure_request_id, occurred_at);
+
+CREATE TABLE vasp_responses (
+    id                      UUID PRIMARY KEY,
+    disclosure_request_id   UUID NOT NULL REFERENCES disclosure_requests(id),
+    received_at             TIMESTAMPTZ NOT NULL,
+    response_kind           TEXT NOT NULL,   -- DATA_PROVIDED | REJECTED |
+                                             -- PARTIAL | CLARIFICATION_SOUGHT
+    rejection_reason        TEXT,
+    address_confirmed_ours  BOOLEAN,
+    attachment_object_key   TEXT,
+    attachment_sha256       BYTEA,
+    recorded_by             UUID NOT NULL REFERENCES users(id)
+);
+
+COMMENT ON COLUMN vasp_responses.address_confirmed_ours IS
+  'Ground truth. When TRUE this is a confirmed positive attribution label;
+   when FALSE it is a confirmed FALSE POSITIVE and must feed both the
+   calibration dataset and the LR-013 adverse-outcome procedure.';
+
+
+═════════════════════════════════════════════════════════════════════════════
+15.  POSTGRESQL — MODEL REGISTRY & MLOPS
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE model_families (
+    id                      SMALLINT PRIMARY KEY,
+    family_key              TEXT NOT NULL UNIQUE,  -- HGT|RGCN|TGN|HAWKES|CALIB
+    display_name            TEXT NOT NULL,
+    task                    TEXT NOT NULL,
+    description             TEXT NOT NULL
+);
+
+CREATE TABLE model_versions (
+    id                      UUID PRIMARY KEY,
+    family_id               SMALLINT NOT NULL REFERENCES model_families(id),
+    semver                  TEXT NOT NULL,
+    artifact_object_key     TEXT NOT NULL,
+    artifact_sha256         BYTEA NOT NULL,
+    framework               TEXT NOT NULL,      -- pytorch-geometric | dgl
+    stage                   model_stage_t NOT NULL DEFAULT 'TRAINING',
+
+    -- training provenance
+    training_dataset_ref    TEXT NOT NULL,      -- e.g. 'elliptic-v1@temporal-split-a'
+    split_strategy          TEXT NOT NULL,      -- MUST be TEMPORAL (DR-003)
+    train_window_end        TIMESTAMPTZ,
+    class_balance           JSONB NOT NULL,
+    hyperparameters         JSONB NOT NULL,
+    feature_set_version     TEXT NOT NULL,
+    synthetic_data_fraction NUMERIC(5,4) NOT NULL DEFAULT 0,
+
+    -- model card (mandatory pre-promotion, MG-002)
+    model_card_object_key   TEXT,
+    known_failure_modes     TEXT,
+    prohibited_uses         TEXT,
+
+    trained_by              UUID REFERENCES users(id),
+    trained_at              TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (family_id, semver),
+    CONSTRAINT ck_model_split CHECK (split_strategy = 'TEMPORAL'),
+    CONSTRAINT ck_model_promo_requires_card CHECK (
+        stage NOT IN ('ACTIVE','SHADOW')
+        OR (model_card_object_key IS NOT NULL
+            AND known_failure_modes IS NOT NULL
+            AND prohibited_uses IS NOT NULL))
+);
+CREATE UNIQUE INDEX ux_model_active ON model_versions(family_id)
+    WHERE stage = 'ACTIVE';
+
+COMMENT ON CONSTRAINT ck_model_split ON model_versions IS
+  'PRD DR-003 enforced in the schema. A random split on a transaction graph
+   leaks future information into training and inflates every metric. This
+   constraint makes the correct methodology structurally unavoidable rather
+   than dependent on the discipline of whoever runs the training script.';
+
+COMMENT ON CONSTRAINT ck_model_promo_requires_card ON model_versions IS
+  'No model reaches ACTIVE or SHADOW without a model card that states its
+   failure modes and prohibited uses. This is the artefact that lets the
+   product survive the question "what does your model get wrong?".';
+
+CREATE TABLE model_evaluations (
+    id                      UUID PRIMARY KEY,
+    model_version_id        UUID NOT NULL REFERENCES model_versions(id),
+    dataset_ref             TEXT NOT NULL,
+    split_name              TEXT NOT NULL,      -- VALIDATION | TEST | HELDOUT
+
+    -- minority-class-first metrics (DR-004)
+    precision_minority      NUMERIC(6,5),
+    recall_minority         NUMERIC(6,5),
+    f1_minority             NUMERIC(6,5),
+    pr_auc                  NUMERIC(6,5),
+    roc_auc                 NUMERIC(6,5),
+    confusion_matrix        JSONB,
+
+    -- calibration (mandatory where output is shown as a probability)
+    expected_calib_error    NUMERIC(6,5),
+    brier_score             NUMERIC(6,5),
+    reliability_curve       JSONB,
+
+    -- honesty artefacts
+    bootstrap_ci            JSONB,              -- EV-003
+    stratified_by_decile    JSONB,              -- EV-004
+    ablation_results        JSONB,              -- EV-005
+    baseline_comparison     JSONB,              -- EV-006
+    negative_findings       TEXT,               -- EV-007
+
+    evaluated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    evaluated_by            UUID REFERENCES users(id)
+);
+CREATE INDEX ix_modeleval_version ON model_evaluations(model_version_id);
+
+COMMENT ON COLUMN model_evaluations.negative_findings IS
+  'Required non-null before promotion review. A model card without a
+   "where this fails" section does not pass review (PRD EV-007).';
+
+CREATE TABLE model_promotions (
+    id                      UUID PRIMARY KEY,
+    model_version_id        UUID NOT NULL REFERENCES model_versions(id),
+    from_stage              model_stage_t NOT NULL,
+    to_stage                model_stage_t NOT NULL,
+    proposed_by             UUID NOT NULL REFERENCES users(id),
+    approved_by             UUID NOT NULL REFERENCES users(id),
+    justification           TEXT NOT NULL,
+    shadow_window_start     TIMESTAMPTZ,
+    shadow_window_end       TIMESTAMPTZ,
+    promoted_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_promo_two_person CHECK (proposed_by <> approved_by)
+);
+
+COMMENT ON CONSTRAINT ck_promo_two_person ON model_promotions IS
+  'Two-person rule (MG-003). The person who trained a model cannot be the
+   only person who decides it goes live in an evidentiary system.';
+
+CREATE TABLE model_drift_observations (
+    id                      BIGSERIAL PRIMARY KEY,
+    model_version_id        UUID NOT NULL REFERENCES model_versions(id),
+    window_start            TIMESTAMPTZ NOT NULL,
+    window_end              TIMESTAMPTZ NOT NULL,
+    abstention_rate         NUMERIC(6,5),
+    mean_max_probability    NUMERIC(6,5),
+    feature_psi              JSONB,   -- population stability index per feature
+    override_rate           NUMERIC(6,5),
+    alert_raised            BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+
+═════════════════════════════════════════════════════════════════════════════
+16.  POSTGRESQL — IMMUTABLE AUDIT LOG (hash-chained)
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE audit_log (
+    id                      BIGSERIAL PRIMARY KEY,
+    occurred_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    actor_user_id           UUID REFERENCES users(id),
+    actor_kind              actor_kind_t NOT NULL,
+    actor_session_id        UUID,
+    source_ip               INET,
+
+    action                  TEXT NOT NULL,
+    entity_type             TEXT NOT NULL,
+    entity_id               UUID,
+    case_id                 UUID,
+    severity                audit_severity_t NOT NULL DEFAULT 'INFO',
+
+    before_state            JSONB,
+    after_state             JSONB,
+    payload_digest          BYTEA NOT NULL,
+
+    -- HASH CHAIN
+    prev_entry_hash         BYTEA,
+    entry_hash              BYTEA NOT NULL,
+
+    CONSTRAINT ck_audit_hash_len CHECK (octet_length(entry_hash) = 32)
+);
+
+CREATE INDEX ix_audit_time     ON audit_log(occurred_at DESC);
+CREATE INDEX ix_audit_actor    ON audit_log(actor_user_id, occurred_at DESC);
+CREATE INDEX ix_audit_case     ON audit_log(case_id, occurred_at DESC)
+    WHERE case_id IS NOT NULL;
+CREATE INDEX ix_audit_entity   ON audit_log(entity_type, entity_id);
+CREATE INDEX ix_audit_critical ON audit_log(occurred_at DESC)
+    WHERE severity = 'CRITICAL';
+
+-- ── APPEND-ONLY ENFORCEMENT (PRD LAW 4 / SR-009) ──────────────────────────
+CREATE OR REPLACE FUNCTION fn_audit_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION
+      'audit_log is append-only: % attempted on entry %', TG_OP, OLD.id
+      USING ERRCODE = 'insufficient_privilege';
+END; $$;
+
+CREATE TRIGGER trg_audit_no_update
+    BEFORE UPDATE ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION fn_audit_immutable();
+
+CREATE TRIGGER trg_audit_no_delete
+    BEFORE DELETE ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION fn_audit_immutable();
+
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM PUBLIC;
+
+-- ── HASH CHAIN CONSTRUCTION ───────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION fn_audit_chain()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    v_prev BYTEA;
+BEGIN
+    SELECT entry_hash INTO v_prev
+      FROM audit_log ORDER BY id DESC LIMIT 1;
+
+    NEW.prev_entry_hash := v_prev;
+    NEW.entry_hash := digest(
+        coalesce(encode(v_prev,'hex'),'GENESIS')
+        || NEW.occurred_at::text
+        || coalesce(NEW.actor_user_id::text,'-')
+        || NEW.action
+        || NEW.entity_type
+        || coalesce(NEW.entity_id::text,'-')
+        || encode(NEW.payload_digest,'hex'),
+        'sha256');
+    RETURN NEW;
+END; $$;
+
+CREATE TRIGGER trg_audit_chain
+    BEFORE INSERT ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION fn_audit_chain();
+
+COMMENT ON TABLE audit_log IS
+  'Each entry commits to its predecessor. Deleting or altering any historical
+   entry breaks every subsequent hash, making silent tampering detectable by
+   the daily verification job (PRD US-ADM-015 AC1/AC3). Note the chain is
+   strictly serialised on insert — this is a deliberate throughput trade
+   accepted because audit integrity outranks audit write speed.';
+
+-- ── DAILY INTEGRITY VERIFICATION ──────────────────────────────────────────
+CREATE OR REPLACE FUNCTION fn_verify_audit_chain(p_from BIGINT DEFAULT 1)
+RETURNS TABLE (broken_at BIGINT, expected BYTEA, found BYTEA)
+LANGUAGE plpgsql AS $$
+DECLARE r RECORD; v_prev BYTEA; v_calc BYTEA;
+BEGIN
+    SELECT prev_entry_hash INTO v_prev FROM audit_log WHERE id = p_from;
+    FOR r IN SELECT * FROM audit_log WHERE id >= p_from ORDER BY id LOOP
+        v_calc := digest(
+            coalesce(encode(v_prev,'hex'),'GENESIS')
+            || r.occurred_at::text
+            || coalesce(r.actor_user_id::text,'-')
+            || r.action || r.entity_type
+            || coalesce(r.entity_id::text,'-')
+            || encode(r.payload_digest,'hex'), 'sha256');
+        IF v_calc <> r.entry_hash THEN
+            broken_at := r.id; expected := v_calc; found := r.entry_hash;
+            RETURN NEXT;
+        END IF;
+        v_prev := r.entry_hash;
+    END LOOP;
+END; $$;
+
+CREATE TABLE audit_chain_checkpoints (
+    id                      BIGSERIAL PRIMARY KEY,
+    checked_through_id      BIGINT NOT NULL,
+    chain_head_hash         BYTEA NOT NULL,
+    is_intact               BOOLEAN NOT NULL,
+    broken_at_id            BIGINT,
+    checked_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    external_anchor_ref     TEXT   -- optional: published head hash reference
+);
+
+COMMENT ON COLUMN audit_chain_checkpoints.external_anchor_ref IS
+  'Phase 5 option: periodically publish the chain head hash to an external
+   append-only medium so that even a full-database compromise cannot rewrite
+   history undetectably. Deliberately NOT specified as a public blockchain
+   write — that raises its own data-governance questions for an LEA system.';
+
+
+═════════════════════════════════════════════════════════════════════════════
+17.  POSTGRESQL — CONFIGURATION & FEATURE FLAGS
+═════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE system_config (
+    config_key              TEXT PRIMARY KEY,
+    config_value            JSONB NOT NULL,
+    value_type              TEXT NOT NULL,
+    description             TEXT NOT NULL,
+    safe_min                NUMERIC,
+    safe_max                NUMERIC,
+    requires_role           TEXT NOT NULL DEFAULT 'ADMIN',
+    last_changed_by         UUID REFERENCES users(id),
+    last_changed_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE system_config_history (
+    id                      BIGSERIAL PRIMARY KEY,
+    config_key              TEXT NOT NULL,
+    old_value               JSONB,
+    new_value               JSONB NOT NULL,
+    changed_by              UUID NOT NULL REFERENCES users(id),
+    justification           TEXT NOT NULL,
+    changed_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Key configuration entries (seeded):
+--   attribution.confidence_action_threshold      0.75   [0.50, 0.99]
+--   attribution.absorption_probability_threshold 0.85   [0.50, 0.99]
+--   classification.abstention_threshold          0.45   [0.20, 0.90]
+--   attribution.max_depth_default                12     [3, 30]
+--   attribution.value_floor_fraction             0.01   [0.0001, 0.5]
+--   montecarlo.sample_count                      10000  [1000, 1000000]
+--   montecarlo.restart_probability               0.15   [0.05, 0.50]
+--   temporal.min_events_for_fit                  30     [10, 500]
+--   ingest.min_sources_for_validation            2      [1, 5]
+--   sahyog.environment                           "MOCK" {MOCK, PRODUCTION}
+--   opsec.self_hosted_only                       false
+
+COMMENT ON COLUMN system_config.safe_min IS
+  'Documented safe range per PRD NFR-MNT-005. An admin cannot set the
+   confidence action threshold to 0.01 and quietly turn the review gate off.';
+
+CREATE TABLE feature_flags (
+    flag_key                TEXT PRIMARY KEY,
+    is_enabled              BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled_for_orgs        UUID[],
+    description             TEXT NOT NULL,
+    changed_by              UUID REFERENCES users(id),
+    changed_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+
+═════════════════════════════════════════════════════════════════════════════
+18.  POSTGRESQL — INDEX STRATEGY SUMMARY
+═════════════════════════════════════════════════════════════════════════════
+
+  ACCESS PATTERN                          →  SUPPORTING INDEX
+  ─────────────────────────────────────────────────────────────────────────
+  "My open cases"                         →  ix_cases_assigned (partial)
+  "Case timeline"                         →  ix_case_events_case_time
+  "Address by chain+string"               →  ux_addresses_chain_addr
+  "All outgoing transfers of address,     →  ix_transfers_from_time
+   newest first, excluding pruned"           (partial, composite)
+  "Tx by hash"                            →  ux_tx_chain_hash
+  "Current classification of address"     →  ix_cls_address_current (partial)
+  "Is this node an absorption state?"     →  ix_cls_absorption (partial)
+  "Paths of a trace, ranked"              →  ix_paths_trace
+  "Hops of a path in order"               →  ix_hops_path
+  "Proof for a cited tx"                  →  ix_merkle_tx
+  "Is address known to belong to a VASP?" →  ix_vaspaddr_address (partial)
+  "Overdue disclosure requests"           →  ix_disc_sla (partial)
+  "Audit trail for a case"                →  ix_audit_case (partial)
+  "Contracts matching a bytecode hash"    →  ix_addresses_bytecode
+
+  PARTIAL-INDEX POLICY: where a predicate is present in >90% of queries
+  (is_pruned = FALSE, superseded_by_id IS NULL, status NOT IN (closed)),
+  the index carries the predicate. On ledger tables this cuts index size
+  substantially and keeps the hot index resident in memory.
+
+  ANTI-PATTERNS EXPLICITLY AVOIDED:
+   - No index on low-cardinality booleans alone.
+   - No recursive CTE traversal of transfers for multi-hop search: that is
+     Neo4j's job. Any PR introducing WITH RECURSIVE over transfers for path
+     finding is rejected on sight.
+   - No random-UUID primary keys on the partitioned ledger tables.
+
+
+═════════════════════════════════════════════════════════════════════════════
+19.  POSTGRESQL — CONSTRAINTS, TRIGGERS & INVARIANTS
+═════════════════════════════════════════════════════════════════════════════
+
+  INVARIANT 1 — Lawful authority precedes traces.
+    Enforced by ck_case_authority_present plus an application check that a
+    trace cannot be launched on a case in DRAFT.
+
+  INVARIANT 2 — No dispatch without approval and scope check.
+    Enforced by ck_disc_dispatch_gate.
+
+  INVARIANT 3 — Ledger tables are insert-only.
+    REVOKE UPDATE, DELETE ON blocks, transactions, transfers FROM app_role;
+    Corrections are made by inserting a superseding row and marking the old
+    one via validation_status, never by mutation.
+
+  INVARIANT 4 — A dossier's cited transactions must be final.
+    Trigger fn_check_dossier_finality() raises if any cited hop has
+    validation_status IN ('PENDING_FINALITY','REORGED').
+
+CREATE OR REPLACE FUNCTION fn_check_dossier_finality()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE v_bad INT;
+BEGIN
+    SELECT count(*) INTO v_bad
+      FROM trace_path_hops h
+     WHERE h.trace_path_id = NEW.trace_path_id
+       AND h.validation_status IN ('PENDING_FINALITY','REORGED');
+    IF v_bad > 0 THEN
+        RAISE EXCEPTION
+          'Cannot generate dossier: % hop(s) are not final', v_bad;
+    END IF;
+    RETURN NEW;
+END; $$;
+
+CREATE TRIGGER trg_dossier_finality
+    BEFORE INSERT ON dossiers
+    FOR EACH ROW EXECUTE FUNCTION fn_check_dossier_finality();
+
+  INVARIANT 5 — Human override requires justification.
+    Enforced by ck_cls_override (length >= 20 characters).
+
+  INVARIANT 6 — Exactly one ACTIVE model per family.
+    Enforced by ux_model_active partial unique index.
+
+  INVARIANT 7 — Monetary values never lose precision.
+    Enforced by NUMERIC(78,0) typing; a CI lint rejects FLOAT/REAL/DOUBLE
+    columns whose names match /(value|amount|balance|fee)/.
+
+  INVARIANT 8 — updated_at maintained automatically.
+
+CREATE OR REPLACE FUNCTION fn_touch_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at := now(); RETURN NEW; END; $$;
+-- Applied to: organizations, users, cases, addresses (cache fields).
+
+  INVARIANT 9 — Case reference generation is gapless and unique per year.
+    Sequence per (year, state_code) with a formatting trigger.
+
+  INVARIANT 10 — Deleting a case is impossible while evidence exists.
+    ON DELETE RESTRICT on every child FK; archival is a status change, never
+    a DELETE. Physical deletion happens only through the retention job, and
+    never while legal_hold is TRUE.
+
+
+═════════════════════════════════════════════════════════════════════════════
+20.  POSTGRESQL — PARTITIONING & RETENTION
+═════════════════════════════════════════════════════════════════════════════
+
+20.1  PARTITIONING
+  blocks / transactions / transfers   → LIST by chain_id (level 1)
+                                        RANGE by block_height (level 2 where
+                                        a chain exceeds ~200M rows)
+  audit_log                           → RANGE by occurred_at, monthly
+  case_events                         → RANGE by occurred_at, quarterly
+
+  Sub-partitioning by height rather than by time is deliberate: block height
+  is monotonic and gap-free, timestamps are not strictly monotonic on some
+  chains, and height-ranged partitions align with how backfills are run.
+
+20.2  RETENTION MATRIX
+  ┌──────────────────────┬──────────────────────────────────────────────────┐
+  │ Data                 │ Policy                                           │
+  ├──────────────────────┼──────────────────────────────────────────────────┤
+  │ audit_log            │ Never deleted. Archived to WORM after 24 months.  │
+  │ evidence_items       │ Retained for case retention period + legal hold.  │
+  │ dossiers             │ Same as evidence; never deleted under legal hold. │
+  │ ledger facts         │ Retained indefinitely (public data, re-fetchable).│
+  │ classifications      │ Retained; cheap and needed for reproducibility.   │
+  │ provider raw payloads│ 90 days in object store, then digest-only.        │
+  │ sessions             │ 30 days.                                          │
+  │ provider_health      │ 13 months rolled up to monthly aggregates.        │
+  │ closed cases         │ Per agency records policy (config-driven).        │
+  └──────────────────────┴──────────────────────────────────────────────────┘
+
+20.3  LEGAL HOLD
+  A case with legal_hold = TRUE is excluded from every retention job. The
+  retention job MUST log the count of records it skipped for legal hold so
+  the exclusion is itself auditable.
+
+
+═════════════════════════════════════════════════════════════════════════════
+21.  NEO4J — GRAPH MODEL
+═════════════════════════════════════════════════════════════════════════════
+
+21.1  WHY A SEPARATE ENGINE
+  The core query is: "from this node, find the shortest weighted path to any
+  node satisfying a label predicate, stopping at absorption states, up to
+  depth 12, on a graph where some nodes have 500k+ neighbours." That is a
+  native graph traversal. In SQL it is a recursive CTE that will not return.
+
+21.2  NODE LABELS
+
+  (:Address)                    -- base label, always present
+    chain_key            STRING  (indexed, shard-local constant)
+    address              STRING  (canonical form)
+    address_uid          STRING  (= chain_key + ':' + address, unique)
+    pg_address_id        STRING  (UUID back-reference to PostgreSQL)
+    is_contract          BOOLEAN
+    degree_in            INTEGER
+    degree_out           INTEGER
+    is_high_degree       BOOLEAN
+    first_activity_ts    INTEGER (epoch seconds)
+    last_activity_ts     INTEGER
+    -- cached classification (denormalised for traversal-time filtering)
+    class                STRING
+    class_probability    FLOAT
+    is_absorption        BOOLEAN
+    class_model_version  STRING
+    class_cached_at      INTEGER
+    temporal_pattern     STRING
+    branching_ratio      FLOAT
+
+  Secondary labels applied additively for fast label-scan filtering:
+    :VASP  :Mixer  :Bridge  :DEX  :Mule  :Staking  :Contract  :Sanctioned
+    :Absorption   :HighDegree   :Seed
+
+  (:Vasp)                       -- entity node, not an address
+    vasp_uid             STRING (unique)
+    legal_name           STRING
+    jurisdiction         STRING
+    fiu_registered       BOOLEAN
+    sahyog_onboarded     BOOLEAN
+
+  (:Asset)
+    asset_uid            STRING (unique: chain_key + ':' + contract|native)
+    symbol               STRING
+    decimals             INTEGER
+    is_stablecoin        BOOLEAN
+
+  (:Block)                      -- sparse; only for cited evidence anchors
+    chain_key            STRING
+    height               INTEGER
+    block_hash           STRING
+
+21.3  RELATIONSHIP TYPES
+
+  (:Address)-[:SENT_NATIVE    ]->(:Address)
+  (:Address)-[:SENT_TOKEN     ]->(:Address)
+  (:Address)-[:INTERNAL_CALL  ]->(:Address)
+  (:Address)-[:UTXO_FLOW      ]->(:Address)
+  (:Address)-[:BRIDGED_TO     ]->(:Address)   -- cross-shard, typed
+  (:Address)-[:COSPEND_WITH   ]-(:Address)    -- undirected inference edge
+  (:Address)-[:DEPOSIT_OF     ]->(:Vasp)
+  (:Address)-[:CHANGE_OF      ]->(:Address)   -- inference edge
+
+  RELATIONSHIP PROPERTIES (on all transfer-type relationships):
+    transfer_uid        STRING  (unique; = chain:txhash:index)
+    tx_hash             STRING
+    block_height        INTEGER
+    block_ts            INTEGER
+    asset_uid           STRING
+    value_base          STRING   -- decimal string; Neo4j has no uint256
+    value_normalised    FLOAT    -- for weighting ONLY, never for evidence
+    weight              FLOAT    -- precomputed search weight
+    time_decay          FLOAT
+    is_pruned           BOOLEAN
+    prune_reason        STRING
+    validation_status   STRING
+    confirmations       INTEGER
+    pg_transfer_id      STRING
+
+  CRITICAL MODELLING NOTE ON value_base:
+    Neo4j has no arbitrary-precision integer type. Exact values are stored as
+    DECIMAL STRINGS and are used only for display/back-reference. All exact
+    arithmetic — every number that reaches a dossier — is done in PostgreSQL
+    against NUMERIC(78,0). value_normalised (a float) exists solely to weight
+    traversal. Using a float value in an evidentiary computation is a
+    correctness bug, and the field name is chosen to make that obvious in
+    code review.
+
+  INFERENCE EDGES ARE TYPED SEPARATELY:
+    COSPEND_WITH and CHANGE_OF are inferences, not observed transfers. They
+    carry `heuristic` and `heuristic_version` properties and are excluded by
+    default from evidentiary path construction. A path that relies on an
+    inference edge is flagged in the dossier as heuristic-dependent.
+
+21.4  BRIDGE / CROSS-SHARD MODEL
+  Each chain lives in its own database (shard). A cross-chain hop is
+  represented in BOTH shards:
+    source shard:  (:Address {chain:'ethereum'})-[:BRIDGED_TO
+                     {counterpart_chain:'polygon',
+                      counterpart_address_uid:'polygon:0x...',
+                      correlation_method:'EVENT_LOG',
+                      correlation_confidence: 0.82}]->(:Address:BridgeStub)
+    dest shard:    a mirrored stub in the opposite direction.
+  The traversal engine detects a BridgeStub, resolves the counterpart via the
+  PostgreSQL bridge_index, and continues the search in the destination shard.
+  The stub keeps each shard self-consistent without cross-database traversal,
+  which Neo4j does not support natively.
+
+
+═════════════════════════════════════════════════════════════════════════════
+22.  NEO4J — CONSTRAINTS, INDEXES & SHARD TOPOLOGY
+═════════════════════════════════════════════════════════════════════════════
+
+// ── Run per shard database ────────────────────────────────────────────────
+
+CREATE CONSTRAINT address_uid_unique IF NOT EXISTS
+FOR (a:Address) REQUIRE a.address_uid IS UNIQUE;
+
+CREATE CONSTRAINT vasp_uid_unique IF NOT EXISTS
+FOR (v:Vasp) REQUIRE v.vasp_uid IS UNIQUE;
+
+CREATE CONSTRAINT asset_uid_unique IF NOT EXISTS
+FOR (s:Asset) REQUIRE s.asset_uid IS UNIQUE;
+
+CREATE CONSTRAINT transfer_uid_unique IF NOT EXISTS
+FOR ()-[r:SENT_NATIVE]-() REQUIRE r.transfer_uid IS UNIQUE;
+// repeat for SENT_TOKEN, INTERNAL_CALL, UTXO_FLOW, BRIDGED_TO
+
+CREATE INDEX address_class IF NOT EXISTS
+FOR (a:Address) ON (a.class);
+
+CREATE INDEX address_absorption IF NOT EXISTS
+FOR (a:Address) ON (a.is_absorption);
+
+CREATE INDEX address_activity IF NOT EXISTS
+FOR (a:Address) ON (a.last_activity_ts);
+
+CREATE INDEX rel_block_height IF NOT EXISTS
+FOR ()-[r:SENT_NATIVE]-() ON (r.block_height);
+
+CREATE INDEX rel_weight IF NOT EXISTS
+FOR ()-[r:SENT_NATIVE]-() ON (r.weight);
+
+22.1  SHARD TOPOLOGY
+
+  ┌─────────────┬──────────────┬───────────────┬──────────────────────────┐
+  │ Shard DB    │ chain_key    │ Model         │ Worker pool              │
+  ├─────────────┼──────────────┼───────────────┼──────────────────────────┤
+  │ shard_btc   │ bitcoin      │ UTXO          │ celery.q.bitcoin         │
+  │ shard_eth   │ ethereum     │ ACCOUNT       │ celery.q.ethereum        │
+  │ shard_bnb   │ bnb          │ ACCOUNT       │ celery.q.bnb             │
+  │ shard_matic │ polygon      │ ACCOUNT       │ celery.q.polygon         │
+  │ shard_trx   │ tron         │ UTXO/hybrid   │ celery.q.tron            │
+  │ shard_sol   │ solana       │ ACCOUNT       │ celery.q.solana          │
+  └─────────────┴──────────────┴───────────────┴──────────────────────────┘
+
+  ROUTING: shard = consistent_hash_ring.lookup(chain_key). Adding chain #7
+  adds a ring entry and a database; it does not move any existing key
+  (PRD NFR-SCAL-001). An architecture fitness test in CI asserts that no
+  core service imports a chain-specific module.
+
+22.2  IDEMPOTENT WRITE PATTERN
+
+MERGE (a:Address {address_uid: $from_uid})
+  ON CREATE SET a.chain_key = $chain, a.address = $from_addr,
+                a.pg_address_id = $from_pg_id, a.degree_out = 0
+MERGE (b:Address {address_uid: $to_uid})
+  ON CREATE SET b.chain_key = $chain, b.address = $to_addr,
+                b.pg_address_id = $to_pg_id, b.degree_in = 0
+MERGE (a)-[r:SENT_NATIVE {transfer_uid: $transfer_uid}]->(b)
+  ON CREATE SET r.tx_hash = $tx_hash,
+                r.block_height = $height,
+                r.block_ts = $ts,
+                r.asset_uid = $asset_uid,
+                r.value_base = $value_str,
+                r.value_normalised = $value_float,
+                r.validation_status = $vstatus,
+                r.confirmations = $confs,
+                r.is_pruned = false,
+                r.pg_transfer_id = $pg_transfer_id;
+
+// MERGE on the natural key makes replays safe (PRD FR-GRF-005, NFR-REL-003).
+
+
+═════════════════════════════════════════════════════════════════════════════
+23.  NEO4J — CANONICAL CYPHER QUERY LIBRARY
+═════════════════════════════════════════════════════════════════════════════
+
+// Q1 — SEED NEIGHBOURHOOD EXPANSION (bounded, pruning-aware)
+MATCH (seed:Address {address_uid: $seed_uid})
+CALL apoc.path.expandConfig(seed, {
+    relationshipFilter: 'SENT_NATIVE>|SENT_TOKEN>|UTXO_FLOW>|INTERNAL_CALL>',
+    labelFilter:        '-Absorption',      // stop at absorbing nodes
+    minLevel: 1,
+    maxLevel: $max_depth,
+    limit:    $node_budget,
+    bfs:      false
+}) YIELD path
+WITH path, relationships(path) AS rels
+WHERE none(r IN rels WHERE r.is_pruned = true)
+  AND all(r IN rels WHERE r.validation_status <> 'PENDING_FINALITY')
+RETURN path
+LIMIT $path_limit;
+
+// NOTE: labelFilter '-Absorption' is the mechanical implementation of
+// classify-then-search. The classifier writes the :Absorption label before
+// this query runs; the traversal therefore never enters a hot wallet's
+// 500k-edge neighbourhood. This single line is the answer to PS gap #1.
+
+
+// Q2 — WEIGHTED SHORTEST PATH TO NEAREST CUSTODIAL VASP
+MATCH (seed:Address {address_uid: $seed_uid})
+MATCH (target:Address)
+WHERE target:VASP AND target.is_absorption = true
+CALL apoc.algo.dijkstra(seed, target,
+    'SENT_NATIVE>|SENT_TOKEN>|UTXO_FLOW>|BRIDGED_TO>', 'weight')
+YIELD path, weight
+RETURN path, weight,
+       length(path)                      AS hop_count,
+       [n IN nodes(path) | n.address]    AS address_chain,
+       [r IN relationships(path) | r.tx_hash] AS tx_chain
+ORDER BY weight ASC
+LIMIT $top_k;
+
+
+// Q3 — PERSONALISED PAGERANK TO RESTRICT THE FRONTIER
+CALL gds.pageRank.stream('phantasm_subgraph', {
+    maxIterations: 20,
+    dampingFactor: 0.85,
+    sourceNodes: [$seed_node_id],
+    relationshipWeightProperty: 'weight'
+})
+YIELD nodeId, score
+WITH gds.util.asNode(nodeId) AS n, score
+WHERE score > $ppr_threshold
+RETURN n.address_uid AS uid, n.class AS class, score
+ORDER BY score DESC
+LIMIT $frontier_size;
+
+
+// Q4 — HIGH-DEGREE GUARD (run before any expansion)
+MATCH (a:Address {address_uid: $uid})
+RETURN a.degree_in + a.degree_out AS degree,
+       a.is_high_degree           AS is_hub,
+       a.class                    AS class,
+       a.is_absorption            AS absorbs;
+// If is_hub AND NOT absorbs AND class = 'UNKNOWN' → force classification
+// before expanding. Expanding an unclassified hub is the failure mode that
+// kills naive implementations.
+
+
+// Q5 — MIXER/BRIDGE ENCOUNTER DETECTION ALONG A PATH
+MATCH path = (seed:Address {address_uid: $seed_uid})-[*1..12]->(t:Address)
+WHERE t.is_absorption = true
+WITH path, [n IN nodes(path) WHERE n:Mixer OR n:Bridge] AS obfuscators
+RETURN path,
+       size(obfuscators)                      AS obfuscator_count,
+       [n IN obfuscators | n.address_uid]     AS obfuscator_uids;
+// obfuscator_count > 0 downgrades path confidence and, for :Mixer, triggers
+// the TERMINATED_AT_OBFUSCATOR flow (PRD Journey B).
+
+
+// Q6 — CO-SPEND CLUSTER RESOLUTION (UTXO shards only)
+MATCH (a:Address {address_uid: $uid})-[:COSPEND_WITH*1..3]-(peer:Address)
+RETURN DISTINCT peer.address_uid AS uid, peer.class AS class
+LIMIT 500;
+// Depth-capped at 3: co-spend closure is transitively explosive and an
+// uncapped traversal will merge half of Bitcoin into one cluster.
+
+
+// Q7 — SUBGRAPH EXTRACTION FOR GNN INFERENCE
+MATCH (seed:Address {address_uid: $seed_uid})
+CALL apoc.neighbors.athop(seed,
+    'SENT_NATIVE|SENT_TOKEN|UTXO_FLOW|INTERNAL_CALL', $k_hops)
+YIELD node
+WITH collect(node) + seed AS nodes
+UNWIND nodes AS n
+MATCH (n)-[r]->(m) WHERE m IN nodes
+RETURN n.address_uid AS src, type(r) AS rel, m.address_uid AS dst,
+       r.value_normalised AS w, r.block_ts AS ts,
+       n.class AS src_class, m.class AS dst_class;
+// Feeds the PyG heterogeneous batch builder. Node/edge TYPE is returned
+// explicitly because a homogeneous collapse loses exactly the relational
+// semantics HGT exists to exploit.
+
+
+// Q8 — REFRESH CACHED CLASSIFICATION AFTER INFERENCE
+UNWIND $rows AS row
+MATCH (a:Address {address_uid: row.uid})
+SET a.class               = row.class,
+    a.class_probability   = row.probability,
+    a.is_absorption       = row.is_absorption,
+    a.class_model_version = row.model_version,
+    a.class_cached_at     = timestamp()
+WITH a, row
+CALL apoc.create.addLabels(a, row.extra_labels) YIELD node
+RETURN count(node);
+
+
+═════════════════════════════════════════════════════════════════════════════
+24.  REDIS — KEYSPACE SPECIFICATION
+═════════════════════════════════════════════════════════════════════════════
+
+24.1  KEY NAMING
+  All keys namespaced: phm:<domain>:<subkey>
+
+  ┌────────────────────────────────────────┬──────────┬──────┬──────────────┐
+  │ Key pattern                            │ Type     │ TTL  │ Purpose      │
+  ├────────────────────────────────────────┼──────────┼──────┼──────────────┤
+  │ phm:addr:{chain}:{addr}:meta           │ HASH     │ 6h   │ degree, class│
+  │ phm:addr:{chain}:{addr}:edges:out      │ ZSET     │ 1h   │ hot edge cache│
+  │ phm:addr:{chain}:{addr}:edges:in       │ ZSET     │ 1h   │ hot edge cache│
+  │ phm:tx:{chain}:{hash}                  │ STRING   │ ∞*   │ immutable fact│
+  │ phm:block:{chain}:{height}             │ STRING   │ ∞*   │ header cache  │
+  │ phm:cls:{chain}:{addr}:{modelver}      │ STRING   │ 24h  │ inference cache│
+  │ phm:proof:{chain}:{txhash}             │ STRING   │ ∞*   │ Merkle proof  │
+  │ phm:trace:{traceId}:progress           │ HASH     │ 24h  │ live UI state │
+  │ phm:trace:{traceId}:frontier           │ ZSET     │ 24h  │ resumable search│
+  │ phm:trace:{traceId}:visited            │ SET      │ 24h  │ cycle guard   │
+  │ phm:lock:trace:{seedUid}               │ STRING   │ 300s │ dedupe lock   │
+  │ phm:rl:{provider}:{window}             │ STRING   │ win  │ token bucket  │
+  │ phm:rl:user:{userId}:{action}          │ STRING   │ win  │ abuse control │
+  │ phm:idem:{idempotencyKey}              │ STRING   │ 7d   │ dispatch dedupe│
+  │ phm:sess:{sessionId}                   │ HASH     │ ttl  │ session cache │
+  │ phm:ws:trace:{traceId}                 │ PUBSUB   │  —   │ progress push │
+  │ phm:q:{chain}                          │ LIST     │  —   │ Celery queue  │
+  │ phm:health:{provider}                  │ HASH     │ 5m   │ health score  │
+  └────────────────────────────────────────┴──────────┴──────┴──────────────┘
+
+  * ∞ means no TTL but subject to LRU eviction under maxmemory policy. These
+    are immutable public facts — losing them costs a re-fetch, never
+    correctness. NOTHING evidentiary is stored ONLY in Redis.
+
+24.2  CACHE INVARIANTS
+  CI-1  Redis is a cache and a broker. It is never a system of record.
+        A total Redis flush must degrade performance and nothing else.
+  CI-2  Any cached value that reaches a dossier carries its original
+        fetched_at from PostgreSQL, not the cache write time.
+  CI-3  Classification cache keys include the model version, so promoting a
+        model naturally invalidates the cache without an explicit purge.
+  CI-4  Distributed locks use SET NX PX with a random token and a Lua
+        compare-and-delete release. A naive DEL release can delete another
+        worker's lock after a timeout.
+  CI-5  maxmemory-policy = allkeys-lru; eviction is expected and safe.
+
+24.3  RATE LIMITING (token bucket, Lua-atomic)
+  -- KEYS[1] = phm:rl:{provider}, ARGV = capacity, refill_rate, now, cost
+  -- Returns 1 if allowed, 0 if throttled, plus retry-after seconds.
+  Per-provider AND per-trace budgets are both enforced so one large trace
+  cannot starve concurrent traces (PRD NFR-PERF-005).
+
+
+═════════════════════════════════════════════════════════════════════════════
+25.  OBJECT STORE — BUCKET & KEY LAYOUT
+═════════════════════════════════════════════════════════════════════════════
+
+  BUCKET: phantasm-evidence          (versioning ON, object-lock ON, WORM)
+    dossiers/{caseId}/{dossierId}/v{n}/dossier.pdf
+    dossiers/{caseId}/{dossierId}/v{n}/bundle.json
+    dossiers/{caseId}/{dossierId}/v{n}/manifest.sha256
+    evidence/{caseId}/{evidenceItemId}/payload.json
+    exports/{caseId}/{exportId}/case-archive.zip
+
+  BUCKET: phantasm-raw               (lifecycle: 90d → digest-only)
+    provider-responses/{chain}/{yyyy}/{mm}/{dd}/{provider}/{txhash}.json.gz
+
+  BUCKET: phantasm-models            (versioning ON, immutable)
+    models/{family}/{semver}/model.pt
+    models/{family}/{semver}/model-card.md
+    models/{family}/{semver}/evaluation.json
+    models/{family}/{semver}/feature-spec.json
+
+  BUCKET: phantasm-attachments       (virus-scanned on write)
+    cases/{caseId}/{attachmentId}/{filename}
+
+  RULES:
+   - Object lock in COMPLIANCE mode on phantasm-evidence: not even an
+     administrator can delete within the retention window. This is the
+     technical control that makes "we could not have altered the evidence"
+     a demonstrable statement rather than an assurance.
+   - Every object's SHA-256 is recorded in PostgreSQL at write time and
+     re-verified on read; a mismatch is a CRITICAL audit event.
+   - Server-side encryption with a customer-managed key.
+   - No object is served to a browser directly; access is via short-lived
+     signed URLs issued after an authorisation check, and every issuance is
+     an audit event.
+
+
+═════════════════════════════════════════════════════════════════════════════
+26.  DATA LIFECYCLE, BACKUP & LEGAL HOLD
+═════════════════════════════════════════════════════════════════════════════
+
+  BACKUP
+    PostgreSQL : continuous WAL archiving + nightly base backup.
+                 RPO ≤ 15 min (PRD NFR-REL-005).
+    Neo4j      : nightly dump. Lower priority — fully rebuildable from
+                 PostgreSQL, which is why the derived-store rule in §1 exists.
+    Object store: cross-region replication for phantasm-evidence only.
+    Redis      : no backup required by design.
+
+  RESTORE DRILL
+    Quarterly, with a documented runbook, restoring to a scratch environment
+    and verifying: audit chain intact, dossier hashes match, a sample trace
+    reproduces byte-identically from its pinned parameters.
+
+  LEGAL HOLD
+    legal_hold on cases cascades logically to all child artefacts and to the
+    object-lock retention on associated evidence objects. Releasing a hold is
+    a privileged, audited, two-person action.
+
+
+═════════════════════════════════════════════════════════════════════════════
+27.  MIGRATION STRATEGY
+═════════════════════════════════════════════════════════════════════════════
+
+  - Versioned, forward-only migrations (Alembic). Every migration has a
+    documented rollback plan even where an automated down-migration is unsafe.
+  - Ledger tables: additive changes only. A column may be added; a column
+    that has ever held evidence is never dropped or retyped. Deprecated
+    columns are commented as such and left in place.
+  - Enum evolution: ADD VALUE only; never rename or remove a value that
+    appears in a persisted row, because a dossier's meaning must not shift
+    under it.
+  - Zero-downtime pattern: expand → backfill → contract, with the contract
+    step deferred to a later release than the expand step.
+  - Neo4j schema changes are applied per shard with an idempotent script and
+    verified by a post-migration constraint check.
+  - Every migration that touches an evidence-bearing table requires a second
+    reviewer, mirroring the two-person rule used for model promotion.
+
+
+═════════════════════════════════════════════════════════════════════════════
+28.  SIZING ESTIMATES (order-of-magnitude, for capacity planning only)
+═════════════════════════════════════════════════════════════════════════════
+
+  Assumptions: pilot with 500 cases/month, average 3 traces per case,
+  average 8,000 transfers touched per trace, 6 chains.
+
+  ┌────────────────────────┬──────────────┬──────────────┬─────────────────┐
+  │ Table                  │ Row width    │ Rows/month   │ Storage/month   │
+  ├────────────────────────┼──────────────┼──────────────┼─────────────────┤
+  │ transfers              │ ~280 B       │ ~12 M        │ ~3.4 GB + idx   │
+  │ transactions           │ ~230 B       │ ~5 M         │ ~1.2 GB + idx   │
+  │ transaction_sources    │ ~180 B       │ ~10 M        │ ~1.8 GB         │
+  │ address_classifications│ ~1.2 KB      │ ~2 M         │ ~2.4 GB         │
+  │ merkle_proofs          │ ~900 B       │ ~50 K        │ ~45 MB          │
+  │ audit_log              │ ~700 B       │ ~3 M         │ ~2.1 GB         │
+  │ dossier PDFs           │ ~1.5 MB      │ ~1.5 K       │ ~2.3 GB         │
+  └────────────────────────┴──────────────┴──────────────┴─────────────────┘
+
+  Indexes add roughly 40–60% on the ledger tables. Budget ~25 GB/month at
+  pilot scale, dominated by transfers and classifications. Note that
+  classifications are the fastest-growing table because they are versioned
+  and never mutated — this is a deliberate cost accepted for reproducibility.
+
+  These figures are planning estimates derived from the stated assumptions,
+  not measurements. They must be replaced with observed numbers after the
+  first month of pilot operation.
+
+
+═════════════════════════════════════════════════════════════════════════════
+29.  SEED / REFERENCE DATA
+═════════════════════════════════════════════════════════════════════════════
+
+INSERT INTO chains (id, chain_key, display_name, chain_model,
+                    native_asset_symbol, caip2_identifier,
+                    address_checksum_scheme, graph_shard_key, proof_kind)
+VALUES
+ (1,'bitcoin', 'Bitcoin',   'UTXO',    'BTC',  'bip122:000000000019d6689c085ae1',
+     'BASE58CHECK_BECH32','shard_btc',  'BTC_MERKLE_DOUBLE_SHA256'),
+ (2,'ethereum','Ethereum',  'ACCOUNT', 'ETH',  'eip155:1',
+     'EIP55','shard_eth',   'ETH_MPT_RECEIPT'),
+ (3,'bnb',     'BNB Chain', 'ACCOUNT', 'BNB',  'eip155:56',
+     'EIP55','shard_bnb',   'ETH_MPT_RECEIPT'),
+ (4,'polygon', 'Polygon',   'ACCOUNT', 'MATIC','eip155:137',
+     'EIP55','shard_matic', 'ETH_MPT_RECEIPT'),
+ (5,'tron',    'Tron',      'UTXO',    'TRX',  NULL,
+     'BASE58CHECK','shard_trx',  'TRON_TX_MERKLE'),
+ (6,'solana',  'Solana',    'ACCOUNT', 'SOL',  NULL,
+     'ED25519_B58','shard_sol', 'SOLANA_ENTRY_ATTESTATION');
+
+INSERT INTO roles (id, role_code, display_name, is_read_only) VALUES
+ (1,'IO','Investigating Officer',FALSE),
+ (2,'ANALYST','Forensic Analyst',FALSE),
+ (3,'SUPERVISOR','Supervisory Officer',FALSE),
+ (4,'LEGAL','Legal Cell',FALSE),
+ (5,'ADMIN','System Administrator',FALSE),
+ (6,'AUDITOR','Auditor',TRUE),
+ (7,'MODEL_CURATOR','Model Curator',FALSE);
+
+INSERT INTO model_families (id, family_key, display_name, task, description)
+VALUES
+ (1,'HGT','Heterogeneous Graph Transformer','node_classification',
+    'Type-dependent attention over the typed transaction multigraph.'),
+ (2,'RGCN','Relational GCN','relational_encoding',
+    'Multi-relational aggregation preserving directional edge semantics.'),
+ (3,'TGN','Temporal Graph Network','dynamic_embedding',
+    'Per-node memory updated on new confirmed transactions.'),
+ (4,'HAWKES','Neural Hawkes Process','temporal_pattern',
+    'Conditional intensity modelling for burst/structuring detection.'),
+ (5,'CALIB','Probability Calibrator','calibration',
+    'Post-hoc calibration. Raw GNN softmax is NOT a probability.');
+
+-- Solana proof honesty record, seeded so it can never be forgotten:
+-- chains.proof_kind = 'SOLANA_ENTRY_ATTESTATION' forces the
+-- alternative_mechanism column to be populated on every Solana proof row
+-- via ck_proof_alt, which forces the dossier to describe what is actually
+-- being asserted instead of implying a Bitcoin-style inclusion proof.
+
+─────────────────────────────────────────────────────────────────────────────
+                   END OF DATABASE SCHEMA — PHANTASM-DBS-v1.0
+─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,1748 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  PHANTASM — TECHNICAL FLOW SPECIFICATION                                     ║
+║  Service Architecture · Runtime Sequences · Algorithms · Failure Semantics   ║
+║                                                                              ║
+║  Document ID    : PHANTASM-TCF-v1.0                                          ║
+║  Classification : RESTRICTED — LEA USE                                       ║
+║  Depends on     : PHANTASM-PRD-v1.0, PHANTASM-DBS-v1.0, PHANTASM-UIX-v1.0    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+TABLE OF CONTENTS
+─────────────────────────────────────────────────────────────────────────────
+  0.  READING THIS DOCUMENT
+  1.  ARCHITECTURAL OVERVIEW
+  2.  SERVICE INVENTORY & RESPONSIBILITY BOUNDARIES
+  3.  DEPLOYMENT TOPOLOGY
+  4.  THE CHAIN ADAPTER CONTRACT
+  5.  MASTER SEQUENCE — TRACE REQUEST LIFECYCLE
+  6.  STAGE 1 — INGESTION & CROSS-VALIDATION
+  7.  STAGE 2 — TEMPORAL PRUNING (HAWKES)
+  8.  STAGE 3 — NODE CLASSIFICATION (HGT / R-GCN / TGN)
+  9.  STAGE 4 — PATH ATTRIBUTION (PPR + DECAYED BIDIRECTIONAL DIJKSTRA)
+ 10.  STAGE 5 — CONFIDENCE SCORING (MONTE CARLO RWR + CALIBRATION)
+ 11.  STAGE 6 — EVIDENCE SEALING (MERKLE PROOF CONSTRUCTION)
+ 12.  DOSSIER GENERATION FLOW
+ 13.  SAHYOG DISCLOSURE DISPATCH FLOW
+ 14.  CROSS-CHAIN BRIDGE RESOLUTION FLOW
+ 15.  REORG DETECTION & INVALIDATION FLOW
+ 16.  QUEUE TOPOLOGY, IDEMPOTENCY & BACKPRESSURE
+ 17.  PROVIDER RATE LIMITING & FAIR-SHARE SCHEDULING
+ 18.  CACHING STRATEGY & INVALIDATION
+ 19.  FAILURE MODES & DEGRADATION LADDER
+ 20.  DETERMINISM & REPLAY MECHANICS
+ 21.  SECURITY ARCHITECTURE (RUNTIME)
+ 22.  OBSERVABILITY: LOGS, METRICS, TRACES, ALERTS
+ 23.  API SURFACE SUMMARY
+ 24.  ML SERVING ARCHITECTURE
+ 25.  CONCURRENCY & CONSISTENCY MODEL
+ 26.  APPENDIX — COMPLEXITY ANALYSIS
+
+
+═════════════════════════════════════════════════════════════════════════════
+0.  READING THIS DOCUMENT
+═════════════════════════════════════════════════════════════════════════════
+
+  This document specifies HOW the system executes. The PRD says what must be
+  true; the schema says where state lives; this document says what happens,
+  in what order, on which thread, and what occurs when it breaks.
+
+  Pseudocode is written to be unambiguous, not to compile. Where a real
+  algorithm has a subtlety that implementers get wrong, the subtlety is
+  called out in a NOTE block rather than left to be discovered in testing.
+
+  NOTATION
+    →        synchronous call
+    ⇢        asynchronous enqueue
+    ⟳        retry with backoff
+    ⊗        terminal failure path
+    [P0]     phase-1 prototype scope
+    [P1/P2]  later phase
+
+
+═════════════════════════════════════════════════════════════════════════════
+1.  ARCHITECTURAL OVERVIEW
+═════════════════════════════════════════════════════════════════════════════
+
+1.1  THE SHAPE OF THE SYSTEM
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                          CLIENT TIER                                    │
+  │  Next.js / React 18 SPA · WebGL graph canvas · WebSocket progress       │
+  └───────────────────────────────┬─────────────────────────────────────────┘
+                                  │ HTTPS / WSS
+  ┌───────────────────────────────▼─────────────────────────────────────────┐
+  │                        EDGE / GATEWAY                                   │
+  │  TLS termination · WAF · auth token validation · per-user rate limit    │
+  └───────────────────────────────┬─────────────────────────────────────────┘
+                                  │
+  ┌───────────────────────────────▼─────────────────────────────────────────┐
+  │                       API SERVICE (FastAPI)                             │
+  │  AuthZ enforcement · case CRUD · trace orchestration entrypoint ·       │
+  │  read models · WebSocket fan-out · audit emission                       │
+  └──┬────────────────────┬──────────────────┬───────────────┬──────────────┘
+     │                    │                  │               │
+     │ ⇢ Celery           │ → Postgres       │ → Neo4j       │ → Redis
+     │                    │                  │               │
+  ┌──▼─────────────────────────────────────────────────────────────────────┐
+  │                      WORKER TIER (Celery)                              │
+  │                                                                        │
+  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────┐  │
+  │  │ INGEST       │ │ ANALYTICS    │ │ ATTRIBUTION  │ │ EVIDENCE      │  │
+  │  │ per-chain    │ │ Hawkes TPP   │ │ PPR+Dijkstra │ │ Merkle proof  │  │
+  │  │ queues       │ │ classify     │ │ Monte Carlo  │ │ dossier PDF   │  │
+  │  │ q.bitcoin    │ │ (GPU/CPU)    │ │              │ │ signing       │  │
+  │  │ q.ethereum   │ │              │ │              │ │               │  │
+  │  │ q.bnb …      │ │              │ │              │ │               │  │
+  │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬────────┘  │
+  └─────────┼────────────────┼────────────────┼────────────────┼───────────┘
+            │                │                │                │
+  ┌─────────▼────────┐ ┌─────▼──────┐ ┌───────▼──────┐ ┌───────▼─────────┐
+  │ PROVIDER GATEWAY │ │ ML SERVING │ │ GRAPH SHARDS │ │ OBJECT STORE    │
+  │ Etherscan        │ │ TorchServe │ │ shard_btc    │ │ evidence (WORM) │
+  │ Alchemy          │ │ or in-proc │ │ shard_eth    │ │ models          │
+  │ Blockchair       │ │ PyG models │ │ shard_bnb …  │ │ raw payloads    │
+  │ mempool.space    │ │            │ │              │ │                 │
+  │ Bitquery / Dune  │ │            │ │              │ │                 │
+  │ self-hosted node │ │            │ │              │ │                 │
+  └──────────────────┘ └────────────┘ └──────────────┘ └─────────────────┘
+
+           ┌──────────────────┐    ┌──────────────────────────────┐
+           │ POSTGRESQL       │    │ SAHYOG CONNECTOR (iface)     │
+           │ system of record │    │ MockImpl [P0] / RealImpl[P1] │
+           └──────────────────┘    └──────────────────────────────┘
+
+1.2  THE ONE ARCHITECTURAL DECISION THAT MATTERS MOST
+
+  CLASSIFY BEFORE YOU SEARCH.
+
+  A naive implementation ingests, builds a graph, and runs BFS/Dijkstra
+  outward from the seed. At the first exchange hot wallet — 500k+
+  counterparties — the frontier explodes and the search never returns.
+
+  PHANTASM inverts the order. Classification runs on the ingested
+  neighbourhood BEFORE path search. Nodes classified as custodial VASPs
+  above the absorption threshold are labelled `:Absorption` in the graph.
+  The traversal then uses a label filter that refuses to expand through an
+  absorbing node.
+
+  Consequence: the search never enters the hot wallet's neighbourhood,
+  because reaching the hot wallet IS the answer. The O(b^d) explosion is not
+  optimised away — it is made structurally unreachable.
+
+  Every stage ordering in §5 exists to serve this inversion.
+
+1.3  DATA FLOW, END TO END
+
+   seed address
+        │
+        ▼
+   ┌─────────────┐   canonical txs   ┌──────────────┐
+   │  INGEST     │──────────────────▶│  POSTGRES    │  (system of record)
+   │  multi-src  │                   └──────┬───────┘
+   │  x-validate │                          │ projection
+   └─────────────┘                          ▼
+        │                            ┌──────────────┐
+        │                            │  NEO4J shard │  (derived graph)
+        │                            └──────┬───────┘
+        ▼                                   │
+   ┌─────────────┐  soft prune flags         │
+   │  HAWKES TPP │─────────────────────────▶ │
+   └─────────────┘                           │
+        │                                    │
+        ▼                                    ▼
+   ┌─────────────┐  class + :Absorption ┌──────────────┐
+   │  HGT/RGCN/  │─────────────────────▶│  LABELLED    │
+   │  TGN        │                      │  GRAPH       │
+   └─────────────┘                      └──────┬───────┘
+                                               │
+                                               ▼
+                                        ┌──────────────┐
+                                        │ PPR frontier │
+                                        │ + decayed    │
+                                        │ bidir Dijkstra│
+                                        └──────┬───────┘
+                                               │ top-K paths
+                                               ▼
+                                        ┌──────────────┐
+                                        │ MONTE CARLO  │
+                                        │ RWR + calib  │
+                                        └──────┬───────┘
+                                               │ confidence + CI
+                                               ▼
+                                        ┌──────────────┐
+                                        │ MERKLE SEAL  │
+                                        └──────┬───────┘
+                                               │
+                          ┌────────────────────┴───────────────────┐
+                          ▼                                        ▼
+                   ┌─────────────┐                          ┌─────────────┐
+                   │ DOSSIER PDF │                          │ SAHYOG REQ  │
+                   │ Sec 63 BSA  │                          │ Sec 94 BNSS │
+                   └─────────────┘                          └─────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+2.  SERVICE INVENTORY & RESPONSIBILITY BOUNDARIES
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────┬────────────────────────────────────────────────────┐
+  │ Service              │ Owns / Must never do                               │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ api-service          │ OWNS: authn/authz enforcement, case CRUD, trace     │
+  │ (FastAPI, stateless) │ orchestration entry, read models, WS fan-out.       │
+  │                      │ NEVER: calls a blockchain provider directly; runs   │
+  │                      │ model inference; performs long CPU work.            │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ ingest-worker        │ OWNS: provider calls, normalisation, cross-         │
+  │ (per-chain queues)   │ validation, finality gating, Postgres+Neo4j write.  │
+  │                      │ NEVER: makes attribution decisions; mutates a row   │
+  │                      │ that has already been sealed into evidence.         │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ analytics-worker     │ OWNS: Hawkes fitting, burst classification, GNN     │
+  │                      │ inference, absorption labelling.                    │
+  │                      │ NEVER: deletes edges; writes to the legal tables.   │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ attribution-worker   │ OWNS: PPR, Dijkstra, path ranking, Monte Carlo,     │
+  │                      │ calibration application.                            │
+  │                      │ NEVER: fetches new on-chain data mid-search (it     │
+  │                      │ operates on a pinned snapshot — see §20).           │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ evidence-worker      │ OWNS: Merkle proof construction & verification,     │
+  │                      │ evidence sealing, dossier rendering, HSM signing.   │
+  │                      │ NEVER: recomputes analytics; alters a path.         │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ provider-gateway     │ OWNS: all outbound blockchain API traffic, rate     │
+  │ (library or sidecar) │ limits, failover, health scoring, OPSEC routing.    │
+  │                      │ NEVER: caches into a dossier-visible field without  │
+  │                      │ preserving the original fetched_at.                 │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ ml-serving           │ OWNS: model loading, batched inference, version     │
+  │                      │ pinning, shadow evaluation.                         │
+  │                      │ NEVER: silently falls back to a different version.  │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ scheduler            │ OWNS: reorg re-validation, audit chain check,       │
+  │ (celery-beat)        │ registry staleness alerts, drift monitoring,        │
+  │                      │ retention & legal-hold enforcement.                 │
+  ├──────────────────────┼────────────────────────────────────────────────────┤
+  │ sahyog-connector     │ OWNS: outbound legal instrument transport.          │
+  │                      │ NEVER: dispatches without the DB-level approval     │
+  │                      │ gate having passed (ck_disc_dispatch_gate).         │
+  └──────────────────────┴────────────────────────────────────────────────────┘
+
+  BOUNDARY RULE: no core service imports a chain-specific module. Chain
+  specificity lives only behind the adapter contract (§4). An architecture
+  fitness test in CI asserts this by static import analysis — it is how
+  NFR-SCAL-001 is verified rather than asserted.
+
+
+═════════════════════════════════════════════════════════════════════════════
+3.  DEPLOYMENT TOPOLOGY
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │ ENVIRONMENT: pilot (government cloud, e.g. NIC/MeghRaj)               │
+  ├───────────────────────────────────────────────────────────────────────┤
+  │ api-service           3 replicas, HPA on CPU + request latency        │
+  │ ingest-worker         per-chain pools, HPA on queue depth             │
+  │                       q.bitcoin 2–8 · q.ethereum 2–8 · others 1–4     │
+  │ analytics-worker      2–6 replicas; GPU node pool optional            │
+  │ attribution-worker    2–6 replicas; memory-heavy (in-proc rustworkx)  │
+  │ evidence-worker       2 replicas; HSM client sidecar                  │
+  │ scheduler             1 replica, leader-elected                       │
+  │ postgres              primary + 1 sync standby + 1 async read replica │
+  │ neo4j                 one instance per shard; read replicas [P2]      │
+  │ redis                 primary + replica, AOF on for the broker        │
+  │ object store          S3-compatible with object lock                  │
+  └───────────────────────────────────────────────────────────────────────┘
+
+  CONSTRAINT (PRD NFR-MNT-003): nothing on the critical path is a
+  cloud-proprietary managed service. Every component above has an
+  open-source, self-hostable implementation. This is what makes government-
+  cloud deployment possible without re-architecture.
+
+  GPU POLICY: training requires GPU. Inference at pilot scale must work on
+  CPU, and the CPU inference path is tested in CI on every model promotion.
+  An agency that cannot get GPU quota must still be able to run the system.
+
+
+═════════════════════════════════════════════════════════════════════════════
+4.  THE CHAIN ADAPTER CONTRACT
+═════════════════════════════════════════════════════════════════════════════
+
+  This interface is the seam that makes multi-chain support tractable. Every
+  chain-specific behaviour lives behind it and nowhere else.
+
+  interface ChainAdapter:
+
+      # ── identity ────────────────────────────────────────────────────────
+      chain_key: str
+      chain_model: Enum{UTXO, ACCOUNT}
+      proof_kind: Enum{...}                    # see DBS §12.4
+
+      # ── address handling ────────────────────────────────────────────────
+      detect_address(raw: str) -> AddressDetection
+          # Returns: {matches: bool, canonical: str, confidence: enum,
+          #           ambiguous_with: [chain_key]}
+          # MUST NOT guess. Ambiguity is returned, not resolved.
+
+      canonicalise(raw: str) -> str
+          # EIP-55 checksum for EVM; Bech32/Base58Check for BTC;
+          # Base58 for Tron; Ed25519 base58 for Solana.
+
+      # ── data acquisition ────────────────────────────────────────────────
+      fetch_address_activity(addr, cursor, limit, direction) -> Page[RawTx]
+      fetch_transaction(tx_hash) -> RawTx
+      fetch_block_header(height_or_hash) -> RawBlockHeader
+      fetch_internal_calls(tx_hash) -> [RawInternalCall]     # ACCOUNT only
+      fetch_token_transfers(tx_hash) -> [RawTokenTransfer]   # ACCOUNT only
+      fetch_utxo_inputs(tx_hash) -> [RawInput]               # UTXO only
+
+      # ── normalisation ───────────────────────────────────────────────────
+      normalise(raw: RawTx) -> CanonicalTx
+      explode_transfers(tx: CanonicalTx) -> [CanonicalTransfer]
+          # THE critical method. One transaction becomes N transfers:
+          # native value + token log events + internal calls (ACCOUNT),
+          # or one flow per (input,output) pairing (UTXO).
+          # Getting this wrong corrupts every downstream stage.
+
+      # ── finality ────────────────────────────────────────────────────────
+      current_head_height() -> int
+      required_confirmations() -> int          # from chain_finality_configs
+      is_final(tx: CanonicalTx, head: int) -> bool
+
+      # ── evidence ────────────────────────────────────────────────────────
+      build_inclusion_proof(tx_hash) -> InclusionProof
+      verify_inclusion_proof(proof, expected_root) -> ProofResult
+
+      # ── model-specific heuristics ───────────────────────────────────────
+      cospend_cluster(tx: CanonicalTx) -> [Address]          # UTXO only
+      infer_change_output(tx: CanonicalTx) -> ChangeInference # UTXO only
+      nonce_sequence(addr, from_n, to_n) -> [CanonicalTx]    # ACCOUNT only
+
+  IMPLEMENTATIONS [P0]:
+    BitcoinAdapter (UTXO)    · EthereumAdapter (ACCOUNT)
+    BnbAdapter (ACCOUNT, extends EthereumAdapter)
+    PolygonAdapter (ACCOUNT, extends EthereumAdapter)
+    TronAdapter (hybrid — see NOTE)
+    SolanaAdapter (ACCOUNT)
+
+  NOTE ON TRON: Tron's native TRX uses a UTXO-flavoured contract model, but
+  TRC-20 tokens are account-based. TronAdapter declares chain_model = UTXO
+  for native flows and routes TRC-20 through account semantics internally.
+  This asymmetry is documented on the adapter and surfaced in the dossier
+  methodology section, because a blanket "Tron is UTXO" claim is wrong and
+  an expert witness would know it.
+
+  NOTE ON SOLANA PROOFS: SolanaAdapter.build_inclusion_proof returns
+  proof_kind = SOLANA_ENTRY_ATTESTATION and MUST populate
+  alternative_mechanism. It never returns a Bitcoin-style Merkle branch,
+  because none exists. See DBS §12.4 and UIX §16.
+
+
+═════════════════════════════════════════════════════════════════════════════
+5.  MASTER SEQUENCE — TRACE REQUEST LIFECYCLE
+═════════════════════════════════════════════════════════════════════════════
+
+5.1  SEQUENCE DIAGRAM
+
+  IO      API        Redis     Ingest    Analytics  Attrib   Evidence   PG/Neo4j
+  │        │           │          │          │         │        │          │
+  ├─POST /traces──────▶│          │          │         │        │          │
+  │        ├─authz check + LR-001 lawful authority gate ───────────────────▶│
+  │        │◀──────────────────────────── case is ACTIVE, authority present─┤
+  │        ├─acquire lock phm:lock:trace:{seedUid} (SET NX PX 300s)────▶│   │
+  │        ├─INSERT traces(status=QUEUED, rng_seed, param_set, pins)───────▶│
+  │        ├─pin graph_snapshot_id ──────────────────────────────────────▶ │
+  │        ⇢ enqueue trace.orchestrate → q.control                        │
+  │◀─202 {traceId} ────┤                                                   │
+  │                    │                                                   │
+  │                 [orchestrator task begins]                             │
+  │                    ├─⇢ ingest.expand(seed, depth=1) → q.{chain}────────▶│
+  │                    │          ├─provider calls (§6) ─────────────────▶ │
+  │                    │          ├─normalise, explode_transfers          │
+  │                    │          ├─cross-validate (§6.4)                 │
+  │                    │          ├─finality gate (§6.5)                  │
+  │                    │          ├─UPSERT Postgres ledger ──────────────▶│
+  │                    │          ├─MERGE Neo4j shard ───────────────────▶│
+  │                    │          └─publish progress → phm:ws:trace:{id}  │
+  │◀══ WS: INGESTING 1284 txs ══════════════════════════════════════════   │
+  │                    │                                                   │
+  │                    ├─⇢ analytics.temporal(traceId) ────────▶│          │
+  │                    │                    ├─fit Hawkes per node (§7)     │
+  │                    │                    ├─soft-prune edges ──────────▶ │
+  │◀══ WS: PRUNING 412 edges filtered ══════════════════════════════════   │
+  │                    │                                                   │
+  │                    ├─⇢ analytics.classify(traceId) ────────▶│          │
+  │                    │                    ├─build hetero subgraph (§8.2) │
+  │                    │                    ├─HGT/R-GCN/TGN inference      │
+  │                    │                    ├─calibrate probabilities      │
+  │                    │                    ├─write classifications ─────▶ │
+  │                    │                    └─SET :Absorption labels ────▶ │
+  │◀══ WS: CLASSIFYING 847/1102 ════════════════════════════════════════   │
+  │                    │                                                   │
+  │                    │        [ADAPTIVE EXPANSION LOOP — see §5.3]       │
+  │                    │                                                   │
+  │                    ├─⇢ attribution.search(traceId) ──────────────▶│    │
+  │                    │                              ├─PPR frontier (§9.2)│
+  │                    │                              ├─bidir Dijkstra(§9.3)
+  │                    │                              └─rank top-K ──────▶ │
+  │◀══ WS: SEARCHING ═══════════════════════════════════════════════════   │
+  │                    │                                                   │
+  │                    ├─⇢ attribution.score(traceId) ───────────────▶│    │
+  │                    │                              ├─Monte Carlo RWR    │
+  │                    │                              ├─apply calibrator   │
+  │                    │                              └─write confidence ─▶│
+  │◀══ WS: SCORING ═════════════════════════════════════════════════════   │
+  │                    │                                                   │
+  │                    ├─⇢ evidence.seal(traceId) ─────────────────────▶│  │
+  │                    │                                    ├─build proofs │
+  │                    │                                    ├─verify proofs│
+  │                    │                                    └─evidence_items
+  │◀══ WS: COMPLETED ═══════════════════════════════════════════════════   │
+  │                    ├─release lock; UPDATE traces(status=COMPLETED)───▶ │
+  │                    └─audit_log entry                                   │
+
+5.2  ORCHESTRATOR PSEUDOCODE
+
+  task trace.orchestrate(trace_id):
+      trace = db.load_trace(trace_id)
+      guard_lawful_authority(trace.case_id)          # LR-001, re-checked
+      set_status(trace, INGESTING)
+
+      snapshot = pin_graph_snapshot(trace)           # §20
+
+      try:
+          # ── adaptive expansion: ingest → classify → decide → repeat ────
+          frontier   = {trace.seed_address}
+          depth      = 0
+          budget     = Budget(nodes=trace.node_budget,
+                              wall_ms=trace.time_budget_ms,
+                              provider_calls=trace.provider_budget)
+
+          while depth < trace.max_depth and frontier and budget.ok():
+              # 1. ingest the current frontier
+              new_nodes = run_parallel_by_chain(
+                             ingest.expand, frontier, budget)
+
+              # 2. temporal pruning on the newly ingested nodes
+              analytics.temporal(trace_id, new_nodes)
+
+              # 3. classify BEFORE deciding whether to expand further
+              classes = analytics.classify(trace_id, new_nodes)
+
+              # 4. absorption check — the core of the design
+              next_frontier = set()
+              for node in new_nodes:
+                  if classes[node].is_absorption:
+                      mark_absorbing(node)           # do NOT expand
+                      continue
+                  if classes[node].label == MIXER:
+                      record_obfuscator(trace_id, node)
+                      continue                       # do NOT expand
+                  if node.is_high_degree and classes[node].label == UNKNOWN:
+                      # unclassified hub: force a targeted re-classify
+                      # rather than expanding into 500k neighbours
+                      force_classify(node)
+                      if classes[node].is_absorption: continue
+                  next_frontier |= viable_successors(node, trace.params)
+
+              frontier = next_frontier
+              depth   += 1
+              publish_progress(trace_id, depth, len(frontier))
+
+          set_status(trace, SEARCHING)
+          paths = attribution.search(trace_id, snapshot)
+
+          if not paths:
+              finalise(trace, NO_PATH_FOUND,
+                       reason=budget.exhausted_reason() or 'NO_TERMINUS')
+              persist_frontier(trace_id, frontier)   # FR-ATT-007 resumable
+              return
+
+          set_status(trace, SCORING)
+          attribution.score(trace_id, paths)
+
+          set_status(trace, SEALING)
+          evidence.seal(trace_id, paths)
+
+          finalise(trace, COMPLETED, reason='ABSORPTION')
+
+      except BudgetExceeded as e:
+          persist_frontier(trace_id, frontier)
+          finalise(trace, BUDGET_EXCEEDED, reason=e.which)
+      except ObfuscatorTerminal as e:
+          run_correlation_analysis(trace_id, e.node)   # Journey B
+          finalise(trace, TERMINATED_AT_OBFUSCATOR, reason='MIXER')
+      except Exception as e:
+          finalise(trace, FAILED, error=e)
+          raise
+      finally:
+          release_lock(trace.seed_uid)
+
+  NOTE — WHY THE LOOP IS ADAPTIVE, NOT TWO PHASES:
+  A naive design ingests everything to depth 12 and then classifies. That
+  ingests the entire neighbourhood of every exchange hot wallet on the way,
+  which is precisely the cost we are avoiding. Interleaving means we discover
+  "this node is a VASP, stop" before paying to ingest its 500k edges.
+  The interleaving is the optimisation; the label filter is the guarantee.
+
+5.3  TERMINATION REASONS (always reported — PRD FR-ATT-005)
+
+  ABSORPTION           reached a custodial VASP; the intended outcome
+  MIXER                terminated at an obfuscation service; Journey B
+  MAX_DEPTH            hop limit reached without a custodial terminus
+  VALUE_FLOOR          remaining traced value fell below the configured floor
+  TIME_BUDGET          wall-clock budget exceeded
+  NODE_BUDGET          expansion budget exceeded
+  PROVIDER_BUDGET      API call budget exceeded
+  NO_TERMINUS          frontier emptied with no absorbing node found
+  ERROR                unhandled failure; trace marked FAILED
+
+  The UI and the dossier both print this verbatim. "Trace complete" is never
+  shown for a budget-terminated search (UIX §25.2).
+
+
+═════════════════════════════════════════════════════════════════════════════
+6.  STAGE 1 — INGESTION & CROSS-VALIDATION
+═════════════════════════════════════════════════════════════════════════════
+
+6.1  FLOW
+
+   expand(address, trace_id)
+     │
+     ├─▶ cache probe: phm:addr:{chain}:{addr}:edges:out (Redis ZSET)
+     │     hit  → return cached edge set (still records fetched_at from PG)
+     │     miss → continue
+     │
+     ├─▶ adapter = registry.get(chain_key)
+     ├─▶ providers = gateway.select(chain_key, opsec_mode, k=2)
+     │
+     ├─▶ parallel fetch from k providers  ⟳ backoff+jitter on 429/5xx
+     │
+     ├─▶ for each provider response:
+     │       raw       = provider.parse()
+     │       canonical = adapter.normalise(raw)
+     │       digest    = sha256(canonical_field_subset)
+     │       INSERT transaction_sources(provider, response_digest,
+     │                                  canonical_digest, fetched_at)
+     │
+     ├─▶ cross-validate (§6.4) → validation_status
+     ├─▶ finality gate (§6.5)  → PENDING_FINALITY or pass
+     ├─▶ transfers = adapter.explode_transfers(canonical)
+     ├─▶ UTXO only: cospend_cluster(), infer_change_output()
+     ├─▶ UPSERT Postgres (idempotent on natural key)
+     ├─▶ MERGE Neo4j (idempotent on transfer_uid)
+     ├─▶ warm Redis edge cache
+     └─▶ publish progress event
+
+6.2  NORMALISATION RULES
+
+  - Values parsed as arbitrary-precision integers from the provider's string
+    form. NEVER via a float intermediate. A provider returning
+    "1.23e+21" is parsed with Decimal and converted to integer base units;
+    parsing it as a Python float loses precision above 2^53 silently.
+  - Timestamps: block_timestamp stored as given, but block_height is the
+    ordering key everywhere (DBS LAW 5).
+  - Addresses: canonicalise() then store BOTH canonical and raw-as-observed.
+  - Missing canonical field → the record is REJECTED, not defaulted (DQ-001).
+
+6.3  THE explode_transfers CONTRACT (worth stating precisely)
+
+  ACCOUNT model, one transaction yields:
+      1 NATIVE transfer          if value > 0
+      N TOKEN transfers          one per Transfer log event decoded
+      M INTERNAL transfers       one per value-bearing internal call
+      1 FEE transfer             from sender to the fee recipient
+  UTXO model, one transaction yields:
+      one UTXO_FLOW per (input_address → output_address) pairing under the
+      configured attribution accounting method (proportional by default),
+      plus change annotations from infer_change_output().
+
+  NOTE: the pairing in the UTXO case is INFERENCE, not observation. A
+  Bitcoin transaction with 3 inputs and 2 outputs does not record which
+  input funded which output. The chosen accounting method (proportional /
+  FIFO / poison) determines the pairing, is recorded on the trace, and is
+  printed in the dossier. Different methods yield different paths; pretending
+  otherwise is the kind of thing that collapses under cross-examination.
+
+6.4  CROSS-VALIDATION ALGORITHM
+
+  function cross_validate(tx_hash, source_records):
+      digests = {r.provider_id: r.canonical_digest for r in source_records}
+
+      if len(digests) == 0:            return UNVERIFIED
+      if len(digests) == 1:            return SINGLE_SOURCE
+
+      distinct = set(digests.values())
+      if len(distinct) == 1:
+          for r in source_records: r.agrees_with_consensus = True
+          return CROSS_VALIDATED
+
+      # disagreement: identify WHICH fields differ, per provider
+      consensus = majority_digest(digests)          # ties → no consensus
+      for r in source_records:
+          r.agrees_with_consensus = (r.canonical_digest == consensus)
+          if not r.agrees_with_consensus:
+              r.disagreement_fields = field_level_diff(r, consensus_record)
+              provider_health.record_disagreement(r.provider_id)
+      return CONFLICTED
+
+  CONSEQUENCES BY STATUS:
+    CROSS_VALIDATED  → eligible for the primary evidentiary path
+    SINGLE_SOURCE    → enters the graph, flagged, excluded from confidence
+                       uplift, printed as single-source in the dossier
+    CONFLICTED       → excluded from the primary path; surfaced in the
+                       conflicts panel with a field-level diff; requires an
+                       explicit analyst acknowledgement (by user id) before
+                       it may appear in a dossier's primary evidence table
+    PENDING_FINALITY → visible, excluded from any path and any dossier
+
+  NOTE ON MAJORITY: with k=2 providers there is no majority on disagreement.
+  The correct behaviour is CONFLICTED with no consensus, not "pick the more
+  trusted provider". Silently preferring a provider would make the
+  cross-validation control decorative.
+
+6.5  FINALITY GATE
+
+  function finality_gate(tx, adapter):
+      head  = adapter.current_head_height()          # cached 15s
+      confs = head - tx.block_height + 1
+      req   = chain_finality_configs.current(chain_id).min_confirmations
+
+      tx.confirmations_at_ingest = confs
+      if confs < req:
+          tx.validation_status = PENDING_FINALITY
+      # Solana: use commitment='finalized' from the RPC rather than a depth
+      # count; req = 0 and the adapter asserts commitment instead.
+
+  Recorded per hop and printed in the dossier (US-ING-004 AC4).
+
+6.6  IDEMPOTENCY
+  All writes keyed on natural identifiers:
+      Postgres: ux_transfers_natural (chain_id, tx_hash, transfer_index)
+      Neo4j:    MERGE on transfer_uid = "{chain}:{txhash}:{index}"
+  A redelivered Celery message therefore cannot duplicate an edge
+  (NFR-REL-003). This is verified by a test that deliberately replays the
+  same ingest task 5× and asserts row counts are unchanged.
+
+
+═════════════════════════════════════════════════════════════════════════════
+7.  STAGE 2 — TEMPORAL PRUNING (HAWKES)
+═════════════════════════════════════════════════════════════════════════════
+
+7.1  WHY THIS RUNS BEFORE CLASSIFICATION
+
+  Obfuscation noise — dust storms, bot bursts, structuring — inflates node
+  degree and distorts the structural features the GNN reads. Pruning first
+  means the classifier sees the money, not the smoke. Pruning after
+  classification would mean classifying the smoke.
+
+7.2  THE MODEL
+
+  Conditional intensity of a self-exciting point process:
+
+      λ(t) = μ + Σ_{t_i < t} α · exp(−β · (t − t_i))
+
+      μ  background (organic) intensity
+      α  excitation magnitude — how much one event provokes the next
+      β  decay rate — how fast that provocation fades
+      n  = α/β  branching ratio: expected offspring per event
+
+  INTERPRETATION, which is what makes it usable in a dossier:
+      n → 0    background-dominated: organic human spending
+      n ≈ 0.5  moderately clustered
+      n → 1    self-sustaining cascade: automated peel chain / structuring
+      n ≥ 1    explosive; in practice indicates a bot or a fitting failure
+
+7.3  ALGORITHM
+
+  function temporal_profile(address, events, params):
+      if len(events) < params.min_events_for_fit:        # default 30
+          return Profile(dominant_pattern=INSUFFICIENT_DATA,
+                         fit_event_count=len(events))
+
+      # 1. MLE fit of (mu, alpha, beta) by L-BFGS on the exact
+      #    log-likelihood of a univariate exponential-kernel Hawkes process
+      ts = sorted(e.timestamp for e in events)
+      (mu, alpha, beta), loglik = fit_hawkes_mle(ts, params)
+
+      n = alpha / beta if beta > 0 else None
+
+      # 2. burst extraction: contiguous windows where λ(t) exceeds
+      #    burst_multiplier × mu
+      bursts = extract_bursts(ts, mu, alpha, beta,
+                              threshold=params.burst_multiplier)
+
+      # 3. pattern scoring — each is a testable structural signature
+      scores = {}
+      scores[PEEL_CHAIN] = peel_score(events)
+          # descending value sequence + near-constant interarrival +
+          # single dominant successor per hop
+      scores[SMURFING]   = smurf_score(events)
+          # many similar-magnitude outputs, values clustered below a
+          # round threshold, tight time window
+      scores[BOT_BURST]  = bot_score(ts, n)
+          # sub-minute interarrival, low CV, high branching ratio
+      scores[DUST_STORM] = dust_score(events, asset.dust_threshold_base)
+          # high count of transfers below the per-asset dust threshold
+      scores[ORGANIC]    = 1 - max(other scores)
+
+      return Profile(mu, alpha, beta, n, loglik, bursts, scores,
+                     dominant_pattern=argmax(scores))
+
+7.4  PRUNING DECISION (SOFT ONLY)
+
+  function apply_pruning(trace, transfers, profiles):
+      for tr in transfers:
+          reason = None
+          if tr.value_base < asset(tr).dust_threshold_base:
+              reason = 'DUST_BELOW_ASSET_THRESHOLD'
+          elif profiles[tr.from_address].dominant_pattern == BOT_BURST \
+               and tr.value_share < params.bot_value_share_floor:
+              reason = 'BOT_BURST_LOW_VALUE'
+          elif is_self_transfer_within_cluster(tr):
+              reason = 'INTRA_CLUSTER_SHUFFLE'
+
+          if reason:
+              tr.is_pruned   = True                # SOFT FLAG ONLY
+              tr.prune_reason = reason
+              neo4j.set_edge_property(tr.uid, is_pruned=True,
+                                      prune_reason=reason)
+
+  HARD RULES:
+   - Pruning NEVER deletes. `is_pruned` is a boolean flag; the edge remains
+     queryable and is one UI click away (UIX §12.1 "Pruned (412)").
+   - A peel chain is NEVER pruned. It is FLAGGED. The peel chain is often the
+     money trail itself; pruning it would delete the answer. Only dust,
+     low-value bot noise and intra-cluster shuffling are pruned.
+   - All parameters are recorded in temporal_profiles.parameters_json and in
+     traces.parameter_set, so a re-run with pruning disabled is a separate,
+     comparable trace (FR-TPP-004, US-TPP-005 AC4).
+
+
+═════════════════════════════════════════════════════════════════════════════
+8.  STAGE 3 — NODE CLASSIFICATION (HGT / R-GCN / TGN)
+═════════════════════════════════════════════════════════════════════════════
+
+8.1  MODEL ROLES
+
+  HGT   type-dependent attention over the heterogeneous multigraph. Learns
+        that "money arriving at an address from 1,180 distinct senders and
+        leaving to exactly 1 address" is the signature of a deposit address —
+        a pattern that only exists if node and edge TYPES are preserved.
+  R-GCN relation-specific weight matrices; preserves directional semantics
+        per edge type (SENT_NATIVE vs BRIDGED_TO are not the same relation).
+  TGN   per-node memory updated on each new confirmed transaction. This is
+        what allows classification of a wallet created yesterday that appears
+        in no training set — the zero-day case the launderer relies on.
+  CALIB post-hoc calibration. MANDATORY. A raw softmax from a GNN is not a
+        probability; presenting it to a court as one would be indefensible.
+
+8.2  SUBGRAPH EXTRACTION → INFERENCE
+
+  function classify_batch(trace_id, nodes, snapshot):
+      # 1. extract k-hop heterogeneous subgraph per node (Cypher Q7)
+      sub = neo4j.extract_hetero_subgraph(nodes, k=params.k_hops,
+                                          exclude_pruned=True)
+
+      # 2. build features
+      feats = {}
+      for n in sub.nodes:
+          feats[n] = concat(
+              structural_features(n),   # degree in/out, unique counterparties,
+                                        # clustering coeff, value entropy,
+                                        # fan-in/fan-out ratio
+              temporal_features(n),     # from Stage 2: mu, alpha, beta,
+                                        # branching ratio, pattern scores,
+                                        # activity lifespan, burst count
+              value_features(n),        # total in/out, median, gini of
+                                        # transfer sizes, stablecoin share
+              contract_features(n),     # is_contract, bytecode signature
+                                        # family match, selector histogram
+              chain_context(n)          # chain one-hot; lets one model share
+                                        # structure across chain families
+          )
+
+      # 3. inference with PINNED versions
+      pins   = trace.model_version_pins
+      h_tgn  = ml.infer(TGN,  sub, feats, version=pins.tgn)   # memory state
+      h_rgcn = ml.infer(RGCN, sub, feats + h_tgn, version=pins.rgcn)
+      logits = ml.infer(HGT,  sub, h_rgcn,        version=pins.hgt)
+
+      # 4. CALIBRATE — never skip
+      probs  = ml.calibrate(logits, version=pins.calibrator)
+
+      # 5. abstention and absorption
+      results = []
+      for n, p in zip(sub.nodes, probs):
+          top, pmax = argmax(p), max(p)
+          if pmax < cfg.classification.abstention_threshold:
+              label, abstained = UNKNOWN, True
+          else:
+              label, abstained = top, False
+
+          is_absorption = (
+              label in {VASP_DEPOSIT, VASP_HOT, VASP_COLD}
+              and pmax >= cfg.attribution.absorption_probability_threshold
+          )
+
+          # independent corroboration, kept SEPARATE (FR-CLS-006)
+          sig      = match_bytecode_signature(n)
+          registry = lookup_vasp_address(n)
+          if registry and registry.attribution_source in
+                          {VASP_DISCLOSED, CASE_CONFIRMED}:
+              is_absorption = True      # a confirmed VASP address absorbs
+                                        # regardless of model opinion
+
+          results.append(Classification(
+              label, p, pmax, abstained, is_absorption,
+              bytecode_signature_id=sig.id if sig else None,
+              registry_match_vasp_id=registry.vasp_id if registry else None,
+              top_features=explain(n, logits),        # faithful, see 8.4
+              model_versions=pins))
+
+      # 6. persist (append-only, versioned) + cache in Neo4j
+      db.insert_classifications(results)
+      neo4j.refresh_class_cache(results)     # Cypher Q8, sets :Absorption
+      redis.setex(f"phm:cls:{chain}:{addr}:{pins.hgt}", 24h, result)
+      return results
+
+8.3  THE ABSORPTION DECISION IS THE PIVOT
+
+  Setting :Absorption on a node is what makes the whole system tractable.
+  It is therefore subject to three independent gates:
+    (a) model probability ≥ absorption_probability_threshold (default 0.85)
+    (b) OR a registry match with source VASP_DISCLOSED / CASE_CONFIRMED
+    (c) an analyst may set it manually, which is recorded as an override
+  A node absorbed on (a) alone is disclosed in the dossier as
+  model-determined; a node absorbed on (b) is disclosed as registry-matched.
+  Those are different evidentiary weights and are never conflated.
+
+8.4  EXPLAINABILITY MUST BE FAITHFUL
+
+  top_features is derived from the model's actual computation — attention
+  mass per relation type from the HGT layer, plus integrated-gradient
+  attributions over the input feature vector. It is NOT a separately
+  generated natural-language rationalisation.
+
+  Where a faithful explanation is unavailable for a component (e.g. the TGN
+  memory state has no clean per-feature attribution), the record says
+  EXPLANATION_UNAVAILABLE for that component and the UI/dossier prints that,
+  rather than presenting a plausible story (PRD US-OBS-017 AC3). Generating
+  a convincing explanation that does not correspond to the computation is
+  worse than admitting the limit — it is a fabrication that an expert can
+  expose.
+
+8.5  HIGH-DEGREE HUB HANDLING
+
+  If a node has degree > cfg.high_degree_threshold and is classified UNKNOWN,
+  the orchestrator does NOT expand it. Instead:
+    1. force a targeted re-classification with a larger k-hop window
+    2. if still UNKNOWN, mark the node PROVISIONAL_ABSORPTION and record the
+       reason 'UNCLASSIFIED_HUB_NOT_EXPANDED'
+    3. surface it in the UI and dossier as an unresolved hub
+  Rationale: expanding an unclassified 500k-degree node is exactly the
+  failure mode the architecture exists to prevent. Refusing to expand and
+  saying so is correct; expanding and timing out is not.
+
+
+═════════════════════════════════════════════════════════════════════════════
+9.  STAGE 4 — PATH ATTRIBUTION
+═════════════════════════════════════════════════════════════════════════════
+
+9.1  TWO-PHASE SEARCH
+
+  Phase A — PPR restricts the frontier to the part of the graph that actually
+            matters relative to the seed.
+  Phase B — bidirectional Dijkstra with exponential time decay finds the
+            cheapest weighted paths from seed to any absorbing node within
+            that frontier.
+
+  Running Dijkstra over the whole ingested graph would work but wastes the
+  structural information PPR gives cheaply. Running PPR alone gives
+  importance, not paths. Both are needed.
+
+9.2  PHASE A — PERSONALISED PAGERANK
+
+  function ppr_frontier(seed, graph, params):
+      # power iteration with restart at the seed
+      r = {seed: 1.0}
+      for i in range(params.max_iterations):        # default 20
+          r_next = defaultdict(float)
+          for u, mass in r.items():
+              if u.is_absorption:
+                  r_next[u] += mass                 # absorbing: mass stays
+                  continue
+              out = viable_out_edges(u)             # excludes pruned
+              W   = sum(e.weight for e in out) or 1
+              for e in out:
+                  r_next[e.dst] += params.damping * mass * (e.weight / W)
+          r_next[seed] += (1 - params.damping)      # restart
+          if l1_delta(r, r_next) < params.tolerance: break
+          r = r_next
+
+      return {u for u, s in r.items() if s > params.ppr_threshold}
+
+  NOTE: absorbing nodes accumulate mass and do not redistribute it. This is
+  not an optimisation detail — it is the mathematical statement of "the trail
+  ends here", and it makes PPR concentrate probability mass on exactly the
+  custodial endpoints we want to find.
+
+9.3  PHASE B — BIDIRECTIONAL DIJKSTRA WITH EXPONENTIAL DECAY
+
+  EDGE WEIGHT (lower is better; the search minimises cost):
+
+      w(e) = −log( value_share(e) )                     # value term
+             + λ_t · (t_now − t_e) / τ                  # age penalty
+             + λ_c · (1 − classification_confidence(dst))
+             + λ_o · obfuscation_penalty(dst)
+             + λ_v · (0 if e.validation_status == CROSS_VALIDATED
+                      else single_source_penalty)
+
+      value_share(e) = e.value_base / total_out_value(src)   in (0,1]
+      τ              = configured decay time constant (default 30 days)
+
+  Using −log(value_share) means summing weights along a path is equivalent to
+  multiplying value shares — so the shortest path is the one that carries the
+  largest fraction of the funds, which is the forensically meaningful notion
+  of "the money went this way". This is why the cost is logarithmic and not
+  linear; a linear cost would favour short paths regardless of value.
+
+  function attribute(seed, graph, params):
+      targets = {n for n in graph if n.is_absorption}
+      if not targets: return TerminationResult(NO_TERMINUS)
+
+      # bidirectional: forward from seed, backward from all absorbing nodes
+      fwd = Dijkstra(source=seed,      direction=OUT, weight=w)
+      bwd = MultiSourceDijkstra(sources=targets, direction=IN, weight=w)
+
+      best = MinHeap(capacity=params.top_k)
+      while fwd.has_next() or bwd.has_next():
+          budget.check()                        # raises BudgetExceeded
+
+          side = fwd if fwd.top_cost() <= bwd.top_cost() else bwd
+          u    = side.pop()
+
+          if u.is_absorption and side is fwd:
+              best.push(reconstruct(fwd, u), fwd.cost(u))
+              continue                          # do NOT expand past it
+
+          if u.label == MIXER:
+              raise ObfuscatorTerminal(node=u)  # Journey B
+
+          if fwd.settled(u) and bwd.settled(u):
+              path = join(fwd, bwd, u)
+              best.push(path, fwd.cost(u) + bwd.cost(u))
+
+          if depth(u) >= params.max_depth:     continue
+          if value_share_along(u) < params.value_floor_fraction: continue
+
+          side.expand(u)
+
+      return rank_and_dedupe(best, params.top_k)
+
+  DEDUPLICATION: two paths differing only in a change-address hop are the
+  same path forensically. Paths are deduplicated on their sequence of
+  non-change, non-intra-cluster addresses before ranking.
+
+9.4  CROSS-CHAIN CONTINUATION
+  On encountering a :BridgeStub, the search suspends, resolves the
+  counterpart via bridge_index (§14), and resumes in the destination shard
+  with accumulated cost carried across and a bridge-correlation penalty
+  applied. Cross-shard hops are marked is_cross_chain_hop = TRUE and their
+  correlation_method is printed in the dossier, because bridge correlation
+  is inference and its method determines how much weight it deserves.
+
+9.5  RESULT
+  Top-K paths written to trace_paths + trace_path_hops with per-hop edge
+  weight, time decay factor, value share, both endpoint classification ids,
+  validation status and confirmations observed — everything needed to
+  reconstruct and defend the hop later without recomputation.
+
+
+═════════════════════════════════════════════════════════════════════════════
+10.  STAGE 5 — CONFIDENCE SCORING
+═════════════════════════════════════════════════════════════════════════════
+
+10.1  MONTE CARLO RANDOM WALK WITH RESTART
+
+  function score_path(path, graph, params, rng_seed):
+      rng  = RNG(rng_seed)                       # DETERMINISM: §20
+      hits = 0
+      N    = params.mc_sample_count              # default 10000, min 1000
+
+      for i in range(N):
+          u = path.seed
+          for step in range(params.max_walk_length):
+              if rng.random() < params.restart_probability:   # default 0.15
+                  u = path.seed
+                  continue
+              out = viable_out_edges(u)
+              if not out: break
+              u = weighted_choice(out, key=lambda e: e.transition_prob, rng=rng)
+              if u.is_absorption:
+                  if u == path.terminal: hits += 1
+                  break
+
+      p_hat = hits / N
+
+      # Wilson score interval — correct for a proportion near 0 or 1,
+      # unlike the normal approximation which can produce bounds outside [0,1]
+      lo, hi = wilson_interval(hits, N, level=params.ci_level)
+
+      converged = running_variance_stable(last_decile_of_estimates)
+
+      return RawScore(p_hat, lo, hi, N, converged, rng_seed)
+
+  NOTE ON THE INTERVAL: using the naive normal approximation here would
+  produce a "credible interval" of e.g. 97.2%–101.4% at high confidence.
+  Printing an upper bound above 100% in a court document is the kind of
+  detail that destroys credibility for a reason unrelated to the underlying
+  analysis. Wilson (or Jeffreys) is required, not preferred.
+
+10.2  FACTOR DECOMPOSITION (FR-CNF-006)
+
+  The single number is decomposed for the UI's confidence explainer:
+
+      factor_classification  mean classification confidence along the path
+      factor_corroboration   fraction of hops that are CROSS_VALIDATED
+      factor_temporal        coherence of inter-hop timing with the Hawkes
+                             model (does the timing look like a real flow?)
+      factor_path_length     monotonic penalty in hop count
+      factor_obfuscation     penalty for bridges crossed; mixers terminate
+
+  These are reported alongside, not multiplied into, the Monte Carlo
+  estimate. They explain the number; they do not silently produce it.
+
+10.3  CALIBRATION
+
+      p_final = calibrator.transform(p_hat)
+
+  Isotonic regression (or temperature scaling) fitted on resolved cases —
+  specifically, on disclosure requests where vasp_responses.
+  address_confirmed_ours is non-null. Those are the only ground-truth labels
+  the system will ever obtain about its own attributions.
+
+  UNTIL SUFFICIENT RESOLVED CASES EXIST, the calibrator is identity and the
+  UI states "calibration data insufficient" rather than displaying a
+  reliability curve fitted on ten points. Showing a confident-looking
+  calibration chart built on inadequate data would be a worse failure than
+  showing none.
+
+10.4  ACTION THRESHOLD GATE
+
+      meets_action_threshold = (p_final >= cfg.confidence_action_threshold)
+
+  If false: the disclosure dispatch action is not merely disabled but absent
+  (UIX §20), and the case routes to REVIEW_REQUIRED. Enforced at three
+  layers — UI, API authorisation, and the ck_disc_dispatch_gate DB
+  constraint — because this is the control that prevents a wrongful freeze.
+
+
+═════════════════════════════════════════════════════════════════════════════
+11.  STAGE 6 — EVIDENCE SEALING
+═════════════════════════════════════════════════════════════════════════════
+
+11.1  FLOW
+
+  for each hop in selected path:
+      proof = adapter.build_inclusion_proof(hop.tx_hash)
+      result = adapter.verify_inclusion_proof(proof, block.merkle_root)
+      persist merkle_proofs(...)
+      persist evidence_items(payload_snapshot = frozen copy, content_digest)
+      append chain_of_custody(action=SEALED)
+
+11.2  BITCOIN-FAMILY PROOF CONSTRUCTION
+
+  function build_btc_proof(tx_hash, block):
+      leaves = [dsha256(raw_tx) for raw_tx in block.transactions]
+      idx    = leaves.index(dsha256(raw_tx_of(tx_hash)))
+      path, i = [], idx
+      level   = leaves
+      while len(level) > 1:
+          if len(level) % 2 == 1:
+              level = level + [level[-1]]        # Bitcoin duplicates the
+                                                 # last hash on odd levels
+          sib = i ^ 1
+          path.append({'position': 'LEFT' if sib < i else 'RIGHT',
+                       'hash': hex(level[sib])})
+          level = [dsha256(level[j] + level[j+1])
+                   for j in range(0, len(level), 2)]
+          i //= 2
+      return InclusionProof(leaf=leaves[idx], path=path, root=level[0],
+                            algorithm='SHA256D', proof_depth=len(path))
+
+  function verify_btc_proof(proof, expected_root):
+      h = proof.leaf
+      for step in proof.path:
+          h = dsha256(step.hash + h) if step.position == 'LEFT' \
+              else dsha256(h + step.hash)
+      return h == expected_root
+
+  TWO SUBTLETIES IMPLEMENTERS GET WRONG:
+   1. ORDERING. Concatenating (sibling‖current) and (current‖sibling) give
+      different roots. The position field is not optional metadata.
+   2. ODD-LEVEL DUPLICATION. Bitcoin duplicates the final hash when a level
+      has an odd count. Omitting this yields a verifier that fails on roughly
+      half of all blocks, and it will fail in a demo before it fails in a test.
+
+11.3  EVM-FAMILY PROOFS
+  Ethereum/BNB/Polygon block headers commit to a Merkle-Patricia trie, not a
+  plain Merkle tree. The adapter produces an MPT branch proof against the
+  transactions or receipts root and stores proof_kind = ETH_MPT_TRANSACTION
+  or ETH_MPT_RECEIPT with hash_algorithm = KECCAK256. Calling this "a Merkle
+  proof" in prose is fine; storing it under a Bitcoin proof_kind is not.
+
+11.4  SOLANA
+  No per-transaction Merkle inclusion proof of the Bitcoin kind exists.
+  SolanaAdapter returns proof_kind = SOLANA_ENTRY_ATTESTATION and MUST
+  populate alternative_mechanism describing exactly what is asserted (slot,
+  entry, bank hash, commitment level, and the provider attestation). The
+  ck_proof_alt constraint makes this structurally unavoidable, and the UI
+  renders the honesty note (UIX §16). A misleading proof here is a legal
+  exposure, not a cosmetic issue.
+
+11.5  THE STANDALONE VERIFIER
+  A dependency-light script is published in the dossier appendix and
+  downloadable from the evidence screen. It takes the proof JSON and
+  recomputes the root with no PHANTASM code involved. This is the artefact
+  that converts "trust our tool" into "check it yourself", and it is the
+  single most persuasive thing the system produces.
+
+11.6  FAILED PROOFS ARE NEVER SUPPRESSED
+  verification_status = FAILED is persisted, counted in
+  dossiers.proofs_failed_count, printed on the cover page, and rendered at
+  the top of the evidence screen. A dossier with a failed proof is still
+  generated. Concealing a failed verification would be materially worse than
+  disclosing one.
+
+
+═════════════════════════════════════════════════════════════════════════════
+12.  DOSSIER GENERATION FLOW
+═════════════════════════════════════════════════════════════════════════════
+
+  API                Evidence-worker              PG        HSM      S3
+   │                        │                      │         │        │
+   ├─POST /dossiers ───────▶│                      │         │        │
+   │   authz: dossier.create│                      │         │        │
+   │                        ├─trigger fn_check_dossier_finality ─────▶│
+   │                        │  ⊗ raises if any hop is PENDING/REORGED │
+   │                        ├─freeze payload snapshots ──────────────▶│
+   │                        ├─render Jinja2 → HTML                    │
+   │                        ├─WeasyPrint → PDF (or ReportLab)         │
+   │                        ├─compute pdf_sha256                      │
+   │                        ├─sign digest ──────────────────▶│        │
+   │                        │◀─signature (key never leaves HSM)       │
+   │                        ├─PUT object (WORM, object-lock) ─────────▶│
+   │                        ├─INSERT dossiers + dossier_signatures ──▶│
+   │                        └─audit_log(DOSSIER_GENERATED)            │
+   │◀─201 {dossierId, sha256} ─────────────────────────────────────────
+
+  MANDATORY SECTIONS (cannot be disabled — UIX §17):
+    cover with dossier hash · case & authority reference · Sec 63 BSA
+    certificate · hop table · per-tx evidence with proofs · confidence
+    analysis · human overrides (if any) · LIMITATIONS · verification appendix
+
+  The limitations section is generated from real state, not boilerplate: the
+  actual evaluation dataset and metrics for the pinned model versions, the
+  actual count of single-source and conflicted transactions, the actual
+  sparse-history hops on this path, and the actual termination reason.
+
+  VERSIONING: regeneration requires a reason, produces v(n+1) linked to the
+  prior version, and the superseded version remains retrievable watermarked
+  SUPERSEDED. Destroying a superseded evidentiary artefact is itself an
+  evidential problem.
+
+
+═════════════════════════════════════════════════════════════════════════════
+13.  SAHYOG DISCLOSURE DISPATCH FLOW
+═════════════════════════════════════════════════════════════════════════════
+
+13.1  STATE MACHINE
+
+  DRAFT ──send for approval──▶ PENDING_APPROVAL
+                                    │
+                     ┌──────────────┼──────────────┐
+                  reject         approve+sign   withdraw
+                     │              │              │
+                     ▼              ▼              ▼
+                  DRAFT          SIGNED        WITHDRAWN
+                                    │
+                              dispatch (idempotent)
+                                    ▼
+                                SUBMITTED ──ack──▶ ACKNOWLEDGED
+                                    │                  │
+                                 reject             response
+                                    ▼                  ▼
+                                REJECTED           RESPONDED ──▶ CLOSED
+                                                       │
+                                                  erratum (LR-013)
+                                                       ▼
+                                                ERRATUM_ISSUED
+
+13.2  DISPATCH SEQUENCE
+
+  Supervisor      API              Connector        SAHYOG/Mock     PG
+      │            │                   │                 │           │
+      ├─POST /requests/{id}/dispatch ──┤                 │           │
+      │            ├─re-auth check (privileged action)   │           │
+      │            ├─verify: approved_by NOT NULL        │           │
+      │            │         scope_check_passed = TRUE   │           │
+      │            │         confidence >= threshold     │           │
+      │            │         dossier signed              │           │
+      │            │  ⊗ any failure → 409 with the specific reason   │
+      │            ├─SETNX phm:idem:{key} ──────────────────────────▶│
+      │            │  (already present → return the prior result)    │
+      │            ├─scope minimisation re-check (LR-006)            │
+      │            ├─build recipient-scoped payload ────▶│           │
+      │            │   (no data about any other VASP's customers)    │
+      │            │                   ├─submit ────────▶│           │
+      │            │                   │◀─submission_id  │           │
+      │            ├─UPDATE status=SUBMITTED, sla_due_at ───────────▶│
+      │            └─audit_log(DISCLOSURE_DISPATCHED, CRITICAL)      │
+
+13.3  MOCK CONNECTOR [P0]
+  Implements the identical interface, persists to a local mock inbox, and
+  returns realistic submission ids and acknowledgement delays. Every response
+  path — including rejection and clarification-sought — is exercisable so the
+  full lifecycle can be demonstrated.
+  is_mock_environment = TRUE forces the non-dismissible MOCK chip
+  everywhere (UIX §3.1, §31 UISEC-09). A demo must never be mistakable for a
+  live government integration.
+
+13.4  JURISDICTION ROUTING
+      FIU_REGISTERED_DOMESTIC   → SAHYOG route, Sec 94 BNSS preselected
+      FIU_REGISTERED_OFFSHORE   → SAHYOG route with a jurisdiction note
+      NOT_REGISTERED_OFFSHORE   → SAHYOG suppressed; MLAT/Interpol packet
+      UNKNOWN_ENTITY            → neither; flagged for I4C escalation
+  Evaluated against the bitemporal registry as at the offence date where
+  relevant, not only as at today (DBS §13).
+
+
+═════════════════════════════════════════════════════════════════════════════
+14.  CROSS-CHAIN BRIDGE RESOLUTION FLOW
+═════════════════════════════════════════════════════════════════════════════
+
+  function resolve_bridge_hop(stub, params):
+      idx = pg.bridge_index.lookup(stub.chain, stub.address)
+      if not idx: return Unresolved('BRIDGE_NOT_INDEXED')
+
+      candidates = neo4j[idx.dest_chain].find_transfers(
+          address = idx.dest_address,
+          window  = [stub.ts, stub.ts + idx.typical_latency * tolerance],
+          asset   = equivalent_asset(stub.asset, idx.dest_chain))
+
+      match idx.correlation_method:
+          EVENT_LOG    → exact match on the bridge's emitted nonce/messageId
+                         → correlation_confidence ≈ 0.95+
+          GUARDIAN_VAA → match on the signed attestation payload
+                         → correlation_confidence ≈ 0.95+
+          NONCE_MATCH  → sequence correlation
+                         → correlation_confidence ≈ 0.85
+          AMOUNT_TIME  → amount + time-window heuristic
+                         → correlation_confidence ≈ 0.5–0.7, and if more than
+                           one candidate matches, return AMBIGUOUS with the
+                           full candidate list rather than picking one
+
+      return BridgeResolution(dest, method, confidence, anonymity_set=len(candidates))
+
+  HONESTY RULE: AMOUNT_TIME correlation across a busy bridge is weak
+  evidence. When the candidate set exceeds the configured ambiguity limit,
+  the hop is recorded as AMBIGUOUS, the path confidence takes the
+  obfuscation penalty, and the dossier states the size of the candidate set.
+  Picking the closest match and presenting it as the answer would be
+  fabrication dressed as analysis.
+
+
+═════════════════════════════════════════════════════════════════════════════
+15.  REORG DETECTION & INVALIDATION FLOW
+═════════════════════════════════════════════════════════════════════════════
+
+  scheduler: revalidate_cited_evidence  (nightly + on-demand)
+
+    for each chain:
+        cited = SELECT DISTINCT block_height, block_hash
+                FROM trace_path_hops h
+                JOIN dossiers d ON d.trace_path_id = h.trace_path_id
+                WHERE d.invalidated_at IS NULL
+        for (height, stored_hash) in cited:
+            live_hash = adapter.fetch_block_header(height).hash
+            if live_hash != stored_hash:
+                mark blocks.is_orphaned = TRUE
+                mark affected transactions.validation_status = REORGED
+                mark affected dossiers.invalidated_at,
+                     invalidation_reason = 'REORG_DETECTED'
+                raise case alert (P1) + audit_log(severity=CRITICAL)
+                if a disclosure request was already dispatched:
+                    create ERRATUM draft addressed to the same VASP
+                    notify the supervisor who signed it
+
+  This is PRD Journey E. The important property is that the system detects
+  its own evidence going stale and says so, rather than a defence expert
+  discovering it first.
+
+
+═════════════════════════════════════════════════════════════════════════════
+16.  QUEUE TOPOLOGY, IDEMPOTENCY & BACKPRESSURE
+═════════════════════════════════════════════════════════════════════════════
+
+16.1  QUEUES
+
+  ┌──────────────────┬──────────┬───────────────────────────────────────────┐
+  │ Queue            │ Priority │ Tasks                                     │
+  ├──────────────────┼──────────┼───────────────────────────────────────────┤
+  │ q.control        │ high     │ trace.orchestrate, cancellation           │
+  │ q.bitcoin        │ normal   │ ingest.expand (UTXO adapter)              │
+  │ q.ethereum       │ normal   │ ingest.expand                             │
+  │ q.bnb / q.polygon│ normal   │ ingest.expand                             │
+  │ q.tron / q.solana│ normal   │ ingest.expand                             │
+  │ q.analytics      │ normal   │ temporal, classify                        │
+  │ q.attribution    │ normal   │ search, score                             │
+  │ q.evidence       │ high     │ seal, dossier render, sign                │
+  │ q.dispatch       │ high     │ sahyog submit, status poll                │
+  │ q.scheduled      │ low      │ revalidation, drift, audit check, retention│
+  └──────────────────┴──────────┴───────────────────────────────────────────┘
+
+  Per-chain queues mean a Bitcoin provider outage cannot stall Ethereum
+  traces, and each pool scales independently on its own depth (NFR-SCAL-002).
+
+16.2  IDEMPOTENCY
+  Every task carries an idempotency key derived from its semantic inputs:
+      ingest.expand      → sha256(trace_id, chain, address, cursor)
+      classify           → sha256(trace_id, node_set_hash, model_pins)
+      seal               → sha256(trace_path_id, snapshot_id)
+      dispatch           → disclosure_requests.idempotency_key
+  A completed key short-circuits and returns the stored result. Combined with
+  natural-key upserts (§6.6), at-least-once delivery is safe.
+
+16.3  RETRIES
+      transient (429, 5xx, timeout)  ⟳ exponential backoff + full jitter,
+                                       max 5 attempts, cap 60s
+      provider not found (404)        → try the next provider, no retry
+      validation error                → no retry; fail the task with detail
+      budget exceeded                 → no retry; surfaces as a result state
+  Poison messages after max retries go to a dead-letter queue with the full
+  context and raise an alert. They are never silently dropped.
+
+16.4  BACKPRESSURE
+  - Bounded prefetch per worker (prefetch_multiplier = 1 for long tasks;
+    a high prefetch on multi-minute tasks causes head-of-line blocking).
+  - Queue depth above a threshold → the API returns 429 on new trace
+    submissions with a Retry-After, rather than accepting work it cannot do.
+  - A single trace's provider budget is capped so it cannot monopolise the
+    shared rate budget (§17).
+  - Circuit breaker per provider: open after N consecutive failures, half-open
+    probe after a cooldown.
+
+
+═════════════════════════════════════════════════════════════════════════════
+17.  PROVIDER RATE LIMITING & FAIR-SHARE SCHEDULING
+═════════════════════════════════════════════════════════════════════════════
+
+17.1  TOKEN BUCKET (Redis Lua, atomic)
+
+  -- KEYS[1] = phm:rl:{provider}
+  -- ARGV    = capacity, refill_per_sec, now_ms, cost
+  local b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+  local tokens = tonumber(b[1]) or tonumber(ARGV[1])
+  local ts     = tonumber(b[2]) or tonumber(ARGV[3])
+  local delta  = (tonumber(ARGV[3]) - ts) / 1000 * tonumber(ARGV[2])
+  tokens = math.min(tonumber(ARGV[1]), tokens + delta)
+  if tokens >= tonumber(ARGV[4]) then
+      tokens = tokens - tonumber(ARGV[4])
+      redis.call('HMSET', KEYS[1], 'tokens', tokens, 'ts', ARGV[3])
+      return {1, 0}
+  else
+      local wait = math.ceil((tonumber(ARGV[4]) - tokens) / tonumber(ARGV[2]))
+      return {0, wait}
+  end
+
+  Atomicity matters: a read-modify-write in application code across N workers
+  will overshoot the provider's limit and get the agency's API key banned
+  mid-investigation.
+
+17.2  FAIR-SHARE (NFR-PERF-005)
+  Two buckets are checked per call: the provider bucket AND a per-trace
+  bucket. A large trace consumes its own allowance and then waits, rather
+  than starving concurrent traces. Weighted fair queuing across active traces
+  with a small weight bonus for TIME_CRITICAL cases.
+
+17.3  PROVIDER SELECTION
+
+  function select(chain, opsec_mode, k):
+      pool = providers.enabled_for(chain)
+      if opsec_mode:
+          pool = [p for p in pool if not p.leaks_query_interest]
+          if len(pool) < k:
+              return DegradedSelection(pool, reason='OPSEC_LIMITED_SOURCES')
+      pool.sort(key=lambda p: (health_score(p), -p.priority_rank), reverse=True)
+      return pool[:k]
+
+  health_score blends rolling success rate, latency, and — weighted most
+  heavily — disagreement rate. A provider whose disagreement rate rises is
+  automatically demoted and an alert is raised (EI-007), because that is the
+  signal of a compromised or malfunctioning source.
+
+17.4  OPSEC MODE (SR-014)
+  Restricts ingestion to providers with leaks_query_interest = FALSE
+  (self-hosted nodes). Slower, fewer cross-validation sources, and the UI
+  says so. The alternative — querying a foreign commercial API and thereby
+  disclosing which addresses an Indian investigation is interested in — is a
+  real counterintelligence exposure that a serious system has to offer an
+  answer to.
+
+
+═════════════════════════════════════════════════════════════════════════════
+18.  CACHING STRATEGY & INVALIDATION
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────┬──────────┬──────────────────────────────────────┐
+  │ Cached item          │ TTL      │ Invalidation                         │
+  ├──────────────────────┼──────────┼──────────────────────────────────────┤
+  │ Finalised tx / block │ none*    │ Only on reorg detection              │
+  │ Merkle proof         │ none*    │ Only on reorg detection              │
+  │ Address edge set     │ 1h       │ TTL + explicit on new ingest         │
+  │ Address metadata     │ 6h       │ TTL                                  │
+  │ Classification       │ 24h      │ Key includes model version → a model │
+  │                      │          │ promotion invalidates naturally      │
+  │ Chain head height    │ 15s      │ TTL                                  │
+  │ Trace progress       │ 24h      │ TTL                                  │
+  │ VASP registry lookup │ 15m      │ Explicit purge on admin edit         │
+  └──────────────────────┴──────────┴──────────────────────────────────────┘
+  * no TTL but LRU-evictable; losing them costs a re-fetch, never correctness.
+
+  INVARIANTS (DBS §24.2): Redis is never a system of record. A full flush
+  degrades latency and nothing else. Any cached value that reaches a dossier
+  carries its original fetched_at from Postgres, never the cache write time —
+  a dossier stating when data was fetched must not be quietly wrong.
+
+
+═════════════════════════════════════════════════════════════════════════════
+19.  FAILURE MODES & DEGRADATION LADDER
+═════════════════════════════════════════════════════════════════════════════
+
+  The rule: DEGRADE VISIBLY, NEVER SILENTLY (PRD P5).
+
+  ┌────────────────────────────┬───────────────────────────────────────────┐
+  │ Failure                    │ Behaviour                                 │
+  ├────────────────────────────┼───────────────────────────────────────────┤
+  │ One provider down          │ Failover to next. If only one remains,     │
+  │                            │ mark SINGLE_SOURCE and show the banner.    │
+  │                            │ Trace continues.                          │
+  │ All providers for a chain  │ Trace FAILED with reason NO_DATA_SOURCE.   │
+  │ down                       │ Frontier persisted; resumable later.       │
+  │ Provider returns bad data  │ Cross-validation catches it → CONFLICTED;  │
+  │                            │ disagreement recorded; provider demoted.   │
+  │ Neo4j shard unavailable    │ That chain's traces queue and retry. Other │
+  │                            │ chains unaffected. If prolonged, the shard │
+  │                            │ is rebuilt from Postgres (DBS §1).         │
+  │ Redis unavailable          │ Broker loss halts new task dispatch. Cache │
+  │                            │ misses degrade latency only. In-flight     │
+  │                            │ tasks complete. Alert P1.                  │
+  │ Postgres primary failover  │ API returns 503 briefly; workers retry.    │
+  │                            │ No evidence loss (sync standby).           │
+  │ ML serving unavailable     │ Classification stage FAILS the trace. It   │
+  │                            │ does NOT fall back to a heuristic          │
+  │                            │ classifier — a silent quality substitution │
+  │                            │ in an evidentiary pipeline is worse than   │
+  │                            │ an honest failure.                        │
+  │ Model produces low         │ Nodes labelled UNKNOWN; hubs marked        │
+  │ confidence broadly         │ PROVISIONAL_ABSORPTION; result surfaced    │
+  │                            │ with an explicit low-classification banner.│
+  │ HSM unavailable            │ Dossier renders but cannot be SIGNED.      │
+  │                            │ Stored unsigned, clearly marked, dispatch  │
+  │                            │ blocked. Never sign with a software key    │
+  │                            │ as a fallback.                            │
+  │ SAHYOG endpoint down       │ Request stays SIGNED; dispatch retried     │
+  │                            │ with the idempotency key. SLA timer starts │
+  │                            │ only on successful submission.            │
+  │ Merkle proof unobtainable  │ proof_status = UNAVAILABLE, recorded and   │
+  │                            │ printed. The hop remains in the path with  │
+  │                            │ a confidence penalty. Never fabricated.    │
+  │ Budget exceeded            │ Partial result + persisted frontier +      │
+  │                            │ explicit termination reason. Resumable.    │
+  │ Audit chain break detected │ CRITICAL alert, banner in the audit        │
+  │                            │ explorer, incident procedure. The system   │
+  │                            │ does not attempt self-repair.             │
+  └────────────────────────────┴───────────────────────────────────────────┘
+
+  THE ML FALLBACK DECISION IS DELIBERATE. Many systems would substitute a
+  rule-based classifier when the model is unavailable. Here that would mean a
+  dossier whose classifications came from a different mechanism than the one
+  named in its model card. Failing the trace is the honest option.
+
+
+═════════════════════════════════════════════════════════════════════════════
+20.  DETERMINISM & REPLAY MECHANICS
+═════════════════════════════════════════════════════════════════════════════
+
+  REQUIREMENT (PRD P4): (seed, snapshot_id, model_versions, rng_seed,
+  parameter_set, engine_version) MUST reproduce a byte-identical result.
+  A defence expert will attempt exactly this.
+
+  MECHANISMS:
+   1. GRAPH SNAPSHOT PINNING. At trace start, `graph_snapshot_id` records a
+      (chain, max_block_height) tuple per chain. All queries filter
+      block_height <= pinned height. Data ingested later is invisible to a
+      replay of that trace.
+   2. RNG SEED. Stored on the trace; every stochastic component (Monte Carlo
+      walks, any sampling in inference) derives from it via a documented
+      child-seed scheme so parallel workers remain reproducible.
+   3. MODEL PINS. All four model versions recorded; promotion never mutates a
+      completed trace.
+   4. PARAMETER SET. The full effective configuration is serialised onto the
+      trace, not read live at replay time.
+   5. ORDERING. Any operation whose result depends on iteration order (heap
+      tie-breaking, equal-weight path selection) uses a deterministic
+      tie-breaker on address_uid. Python set iteration order is NOT relied on
+      anywhere in the attribution path.
+   6. FLOAT DETERMINISM. Attribution weights are computed in a fixed order
+      with a fixed dtype. Where GPU non-determinism could affect an output
+      that reaches a dossier, the CPU path is used for the final scoring run.
+
+  REPLAY ENDPOINT [P1]: POST /traces/{id}/replay re-executes with the stored
+  parameters and asserts byte-equality of the result digest, returning a
+  diff if it fails. This is both a regression test and a courtroom
+  demonstration.
+
+
+═════════════════════════════════════════════════════════════════════════════
+21.  SECURITY ARCHITECTURE (RUNTIME)
+═════════════════════════════════════════════════════════════════════════════
+
+21.1  AUTHENTICATION & SESSION
+  SSO (SAML/OIDC) → short-lived access token + rotating refresh token.
+  MFA mandatory. Privileged actions (sign, dispatch, model promote, registry
+  edit, grant access) require re-authentication if the session's
+  last_reauth_at exceeds the configured window.
+
+21.2  AUTHORISATION
+  Deny by default. Every endpoint declares required permission and
+  jurisdictional scope in a decorator; a missing declaration fails the build
+  (a CI check enumerates routes and asserts each has a declaration).
+  Case scope is enforced in the query layer, not by post-filtering results —
+  post-filtering leaks existence through timing and counts.
+
+21.3  KEY MANAGEMENT
+  Signing keys live in an HSM/KMS. The application holds only a key handle
+  (users.signing_key_ref). Private key material never enters application
+  memory in production. No software-key fallback exists, by design (§19).
+
+21.4  UNTRUSTED DATA HANDLING
+  Provider responses, contract bytecode, token names and symbols are hostile
+  input:
+    - never executed, never eval'd, never rendered as raw HTML
+    - length-bounded and escaped at every boundary
+    - token metadata specifically is attacker-controlled and cheap to abuse
+  Bytecode is hashed and matched against signatures; it is never decompiled
+  or executed by the pipeline.
+
+21.5  INSIDER MISUSE CONTROLS
+  Lawful-authority gate (LR-001) at trace launch; purpose limitation (no
+  free exploration mode exists in the product at all); per-user action rate
+  limits with anomaly detection on unusual patterns (e.g. one account tracing
+  many unrelated addresses across cases); hash-chained audit with daily
+  verification; time-bounded, justified cross-jurisdiction grants.
+
+21.6  DATA EGRESS
+  Evidence objects are served only via signed URLs expiring in ≤5 minutes,
+  issued after an authorisation check, with issuance audited. Bulk export is
+  a privileged, audited action producing a signed archive.
+
+
+═════════════════════════════════════════════════════════════════════════════
+22.  OBSERVABILITY
+═════════════════════════════════════════════════════════════════════════════
+
+22.1  CORRELATION
+  A single correlation_id is generated at the API edge and propagated through
+  every queue message, log line, database statement comment, and span for the
+  entire trace lifecycle. Debugging a multi-stage distributed trace without
+  this is guesswork.
+
+22.2  STRUCTURED LOGGING
+  JSON lines: timestamp, level, service, correlation_id, trace_id, case_id,
+  actor_id, event, duration_ms, plus event-specific fields.
+  NEVER LOGGED: full case narrative, victim details, credentials, signed
+  payloads, private key handles. Addresses ARE logged (they are public data
+  and essential for debugging); the case linkage is what is sensitive, and it
+  is present but access-controlled.
+
+22.3  METRICS
+    trace_stage_duration_seconds{stage,chain}          histogram
+    trace_terminations_total{reason}                   counter
+    provider_requests_total{provider,status}           counter
+    provider_disagreements_total{provider}             counter
+    cross_validation_status_total{status}              counter
+    classification_abstention_ratio{model_version}     gauge
+    absorption_hits_total{source}                      counter
+    nodes_expanded_per_trace                           histogram
+    confidence_distribution                            histogram
+    proofs_verified_total{chain,status}                counter
+    dossiers_generated_total                           counter
+    disclosure_dispatch_total{status}                  counter
+    audit_chain_intact                                 gauge (0/1)
+    queue_depth{queue}                                 gauge
+
+22.4  ALERTS
+  ┌──────────────────────────────────────┬──────────┬────────────────────┐
+  │ Condition                            │ Severity │ Response           │
+  ├──────────────────────────────────────┼──────────┼────────────────────┤
+  │ audit_chain_intact == 0              │ CRITICAL │ Incident procedure │
+  │ Reorg affecting a cited transaction  │ CRITICAL │ Invalidate+erratum │
+  │ Proof verification failure rate ↑    │ HIGH     │ Investigate adapter│
+  │ Provider disagreement rate ↑         │ HIGH     │ Demote + review    │
+  │ Abstention rate ↑ (drift)            │ MEDIUM   │ Curator review     │
+  │ Queue depth sustained above limit    │ MEDIUM   │ Scale workers      │
+  │ Registry entry unverified > 180 days │ LOW      │ Admin task         │
+  │ Dispatch to a below-threshold path   │ CRITICAL │ Should be           │
+  │ attempted (should be impossible)     │          │ impossible → bug   │
+  └──────────────────────────────────────┴──────────┴────────────────────┘
+
+22.5  DISTRIBUTED TRACING [P1]
+  OpenTelemetry spans across API → queue → worker → provider → database.
+  Provider latency is measured as its own span so that NFR-PERF-001's
+  requirement to separate provider latency from compute latency in the
+  benchmark is satisfied by instrumentation rather than by estimation.
+
+
+═════════════════════════════════════════════════════════════════════════════
+23.  API SURFACE SUMMARY
+═════════════════════════════════════════════════════════════════════════════
+
+  AUTH
+    POST   /auth/login · /auth/mfa · /auth/refresh · /auth/reauth
+  CASES
+    POST   /cases                          case.create
+    GET    /cases · /cases/{id}            case.read (scoped)
+    PATCH  /cases/{id}                     case.update
+    POST   /cases/{id}/seed-addresses      case.update
+    POST   /cases/{id}/access-grants       case.grant (privileged)
+  ADDRESSES
+    POST   /addresses/detect               → chain detection + ambiguity
+  TRACES
+    POST   /cases/{id}/traces              trace.launch (LR-001 gate)
+    GET    /traces/{id}                    trace.read
+    GET    /traces/{id}/paths · /graph · /confidence · /evidence
+    POST   /traces/{id}/cancel · /resume · /replay
+  CLASSIFICATION
+    POST   /addresses/{id}/reclassify      classification.override
+  DOSSIERS
+    POST   /traces/{id}/dossiers           dossier.create
+    GET    /dossiers/{id} · /dossiers/{id}/download (signed URL)
+  DISCLOSURE
+    POST   /dossiers/{id}/requests         request.create
+    POST   /requests/{id}/submit-approval  request.submit
+    POST   /requests/{id}/dispatch         request.dispatch (privileged)
+    POST   /requests/{id}/response         request.record_response
+  ADMIN
+    /admin/vasps · /admin/bridges · /admin/signatures
+    /admin/models · /admin/models/{id}/promote (two-person)
+    /admin/config · /admin/providers · /admin/users
+  AUDIT
+    GET    /audit · /cases/{id}/audit · POST /audit/export
+  WEBSOCKET
+    WSS    /ws/traces/{id}                 progress stream
+
+  CONVENTIONS: all mutations idempotent via an Idempotency-Key header;
+  cursor pagination; RFC 7807 problem+json errors carrying a support
+  reference id that matches the correlation_id in the logs.
+
+
+═════════════════════════════════════════════════════════════════════════════
+24.  ML SERVING ARCHITECTURE
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ analytics-worker                                                     │
+  │   ├─ model cache (LRU, keyed by version hash)                        │
+  │   ├─ artefact loader: fetch from object store, verify sha256 against │
+  │   │   model_versions.artifact_sha256 before loading                  │
+  │   │   ⊗ hash mismatch → refuse to load, CRITICAL alert. A model      │
+  │   │     artefact is supply chain and is treated as such.             │
+  │   ├─ batched inference (dynamic batching, max 256 nodes)             │
+  │   ├─ CPU path always available and CI-tested                         │
+  │   └─ shadow evaluation: candidate model runs alongside ACTIVE,       │
+  │      outputs persisted, never surfaced, for the evaluation window    │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  VERSION PINNING: inference is called with an explicit version. If that
+  version cannot be loaded, the call FAILS. It never silently serves a
+  different version — a dossier's model card would then be false.
+
+  KILL SWITCH (MG-005): demoting the ACTIVE model updates the registry;
+  workers detect the change on their next cache check and reload. No
+  deployment required. Traces in flight keep their pinned versions.
+
+  TRAINING (offline): temporal splits enforced by the ck_model_split
+  constraint; ablation and baseline comparison required before promotion;
+  negative findings required non-null. Override-derived labels pass through
+  the curator gate (classification_label_candidates) before entering a
+  training set, preventing the closed feedback loop in RSK-011.
+
+
+═════════════════════════════════════════════════════════════════════════════
+25.  CONCURRENCY & CONSISTENCY MODEL
+═════════════════════════════════════════════════════════════════════════════
+
+  - Postgres is the linearisable source of truth. Neo4j and Redis are
+    eventually consistent projections of it.
+  - Write order is always Postgres first, then Neo4j, then cache warm. A
+    crash between steps leaves the graph behind the ledger, which is
+    self-healing on the next ingest (MERGE is idempotent) and detectable by a
+    reconciliation job.
+  - Duplicate-trace prevention: SET NX PX lock on phm:lock:trace:{seedUid},
+    released in a finally block, with a random token and Lua compare-and-
+    delete on release. A naive DEL can delete another worker's lock after a
+    timeout — this is a real, commonly-shipped bug.
+  - Optimistic concurrency on mutable rows (cases, requests) via an updated_at
+    precondition; a conflict returns 409 with the current state rather than
+    last-write-wins.
+  - Evidence and ledger rows are append-only, so they have no write conflicts
+    by construction. This is a large part of why the append-only design was
+    chosen beyond its evidentiary motivation.
+  - Read replicas serve dashboards and list views; anything that feeds a
+    dossier reads the primary.
+
+
+═════════════════════════════════════════════════════════════════════════════
+26.  APPENDIX — COMPLEXITY ANALYSIS
+═════════════════════════════════════════════════════════════════════════════
+
+  Let b = average branching factor, d = depth, A = absorbing node count,
+  F = PPR frontier size, E_F = edges within the frontier, N = MC samples.
+
+  NAIVE BFS/DFS
+      O(b^d).  With b ≈ 40 for an ordinary wallet and b ≈ 5×10^5 at a hot
+      wallet, d = 6 is already intractable. This is the PS's stated gap.
+
+  PHANTASM
+      Ingestion            O(Σ_hops nodes_at_hop × providers)
+                           bounded by the node and provider budgets
+      Hawkes fit           O(n log n) per node (n = event count), n capped
+      Classification       O(F × k-hop subgraph size), batched
+      PPR                  O(iterations × E_F), iterations ≤ 20
+      Bidirectional        O(E_F log F), and critically the effective b is
+      Dijkstra             reduced because absorbing nodes are never expanded
+      Monte Carlo          O(N × walk_length), N = 10^4 default
+      Proof construction   O(log T) per transaction, T = txs in block
+
+  THE KEY POINT: absorption labelling does not reduce the exponent, it
+  truncates the tree. The depth at which the search terminates is the depth
+  at which the money reaches a custodial service — typically 3–8 hops in
+  practice — and the branching factor at the terminal node is irrelevant
+  because that node is never expanded.
+
+  HONEST CAVEATS:
+   - A launderer who avoids custodial services entirely produces a trace that
+     runs to max_depth and terminates NO_TERMINUS. The system reports that
+     rather than manufacturing an answer.
+   - Deliberately long, high-fan-out chains degrade recall. The degradation
+     must be measured per NFR-PERF-001 and reported, not assumed away.
+   - No latency figure is asserted in this document. The benchmark procedure
+     in PRD NFR-PERF-001 produces it; until then, any number would be a
+     guess dressed as a specification.
+
+─────────────────────────────────────────────────────────────────────────────
+                   END OF TECHNICAL FLOW — PHANTASM-TCF-v1.0
+─────────────────────────────────────────────────────────────────────────────

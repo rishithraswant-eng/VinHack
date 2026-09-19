@@ -1,0 +1,1664 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  PHANTASM — PRODUCT REQUIREMENTS DOCUMENT (PRD)                              ║
+║  Probabilistic Heterogeneous Attribution & Nexus Trace                       ║
+║  for Automated SAHYOG Mapping                                                ║
+║                                                                              ║
+║  Problem Statement ID : SIH26182                                             ║
+║  Organization         : Ministry of Home Affairs (MHA) / I4C                 ║
+║  Category             : Software — Cybersecurity & Blockchain                ║
+║                                                                              ║
+║  Document ID          : PHANTASM-PRD-v1.0                                    ║
+║  Classification       : RESTRICTED — LEA USE                                 ║
+║  Status               : BASELINED FOR BUILD                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+TABLE OF CONTENTS
+─────────────────────────────────────────────────────────────────────────────
+  0.  DOCUMENT CONTROL & CONVENTIONS
+  1.  EXECUTIVE SUMMARY
+  2.  PROBLEM DEFINITION & EVIDENCE BASE
+  3.  GOALS, NON-GOALS & GUIDING PRINCIPLES
+  4.  PERSONAS & STAKEHOLDER MAP
+  5.  USER JOURNEYS (NARRATIVE)
+  6.  EPICS & USER STORIES WITH ACCEPTANCE CRITERIA
+  7.  FUNCTIONAL REQUIREMENTS (FR)
+  8.  NON-FUNCTIONAL REQUIREMENTS (NFR)
+  9.  LEGAL, EVIDENTIARY & COMPLIANCE REQUIREMENTS (LR)
+ 10.  SECURITY & PRIVACY REQUIREMENTS (SR)
+ 11.  DATA REQUIREMENTS & PROVENANCE
+ 12.  EXTERNAL INTERFACE REQUIREMENTS
+ 13.  ML MODEL REQUIREMENTS & EVALUATION CONTRACT
+ 14.  ANALYTICS, SUCCESS METRICS & KPIs
+ 15.  ASSUMPTIONS, DEPENDENCIES & CONSTRAINTS
+ 16.  RISK REGISTER
+ 17.  OUT OF SCOPE (v1)
+ 18.  RELEASE CRITERIA / DEFINITION OF DONE
+ 19.  OPEN QUESTIONS
+ 20.  APPENDIX A — GLOSSARY
+ 21.  APPENDIX B — REQUIREMENTS TRACEABILITY MATRIX
+
+
+═════════════════════════════════════════════════════════════════════════════
+0.  DOCUMENT CONTROL & CONVENTIONS
+═════════════════════════════════════════════════════════════════════════════
+
+0.1  VERSION HISTORY
+  ┌─────────┬────────────┬──────────────────┬──────────────────────────────┐
+  │ Version │ Date       │ Author           │ Change                       │
+  ├─────────┼────────────┼──────────────────┼──────────────────────────────┤
+  │ 0.1     │ TBD        │ Architecture     │ Initial skeleton             │
+  │ 0.5     │ TBD        │ Architecture     │ FR/NFR expansion             │
+  │ 1.0     │ TBD        │ Architecture     │ Baselined for Phase-1 build  │
+  └─────────┴────────────┴──────────────────┴──────────────────────────────┘
+
+0.2  REQUIREMENT KEYWORD CONVENTION (RFC 2119 semantics)
+  MUST / SHALL      — mandatory. Absence blocks release.
+  SHOULD            — strongly recommended. Deviation requires written waiver.
+  MAY               — optional. Implement only if cost-free.
+
+0.3  REQUIREMENT ID SCHEME
+  FR-<MODULE>-<NNN>   Functional requirement
+  NFR-<CLASS>-<NNN>   Non-functional requirement
+  LR-<NNN>            Legal / evidentiary requirement
+  SR-<NNN>            Security requirement
+  US-<EPIC>-<NNN>     User story
+  RSK-<NNN>           Risk register entry
+
+  MODULE codes:
+    ING  Ingestion & Chain Adapters      GRF  Graph Store & Sharding
+    TPP  Temporal Point Process          CLS  Node Classification
+    ATT  Path Attribution                CNF  Confidence Scoring
+    EVD  Evidence & Merkle Sealing       SHY  SAHYOG Integration
+    CAS  Case Management                 UIX  User Interface
+    ADM  Administration & RBAC           OBS  Observability
+    MLP  ML Platform / MLOps
+
+0.4  PRIORITY SCHEME (MoSCoW, gated to phases)
+  P0 — Must have for SIH prototype demo (Phases 1–3)
+  P1 — Must have for a credible pilot deployment (Phase 4)
+  P2 — Should have for production hardening (Phase 5)
+  P3 — Could have / post-v1 roadmap
+
+0.5  STATISTICAL CLAIMS POLICY
+  Every externally cited statistic in this product's UI, dossiers, and pitch
+  material MUST carry an inline source attribution and a `verified_on` date.
+  Figures inherited from the source idea document (Chainalysis 2026 report,
+  MHA Lok Sabha replies, FIU-IND registration counts, SAHYOG onboarding
+  counts) MUST be re-verified against the primary source before any judge
+  presentation or ministry demo. The system MUST NOT hardcode a statistic
+  in a dossier template without a citation field.
+
+
+═════════════════════════════════════════════════════════════════════════════
+1.  EXECUTIVE SUMMARY
+═════════════════════════════════════════════════════════════════════════════
+
+1.1  ONE-PARAGRAPH PRODUCT DEFINITION
+
+PHANTASM is an automated blockchain forensics platform for Indian law
+enforcement that converts a single suspect wallet address into a
+court-admissible, cryptographically verifiable attribution dossier plus a
+pre-filled SAHYOG disclosure request routed to the nodal officer of the
+first custodial VASP in the money trail. It replaces a multi-day,
+specialist-dependent manual tracing workflow with a classify-then-search
+graph pipeline that (a) classifies every unlabeled intermediary entity
+before path search begins, (b) prunes obfuscation noise using continuous-time
+temporal modelling, (c) terminates at the nearest custodial touchpoint rather
+than attempting full ownership clustering, and (d) seals every cited
+transaction with a Merkle inclusion proof so a court, defence counsel, or
+independent auditor can verify the evidence without trusting PHANTASM.
+
+1.2  THE ONE SENTENCE THAT DEFINES SCOPE
+
+  "Given a suspect wallet address, find the shortest high-confidence path to
+   the FIRST custodial VASP that can be legally compelled to disclose the
+   account holder — and produce the legal instrument to compel it."
+
+  Everything that does not serve that sentence is out of scope for v1.
+
+1.3  WHY THIS IS NOT "ANOTHER CHAINALYSIS"
+
+  ┌────────────────────┬─────────────────────────┬──────────────────────────┐
+  │ Dimension          │ Commercial tools        │ PHANTASM                 │
+  ├────────────────────┼─────────────────────────┼──────────────────────────┤
+  │ Primary output     │ Visual graph            │ Legal instrument + graph │
+  │ Unknown wallets    │ Pre-tagged DB lookup    │ Dynamic HGT/TGN classify │
+  │ Evidence integrity │ Vendor assertion        │ Merkle inclusion proof   │
+  │ Indian workflow    │ None                    │ Native SAHYOG pre-fill   │
+  │ Chain model        │ Largely uniform logic   │ UTXO vs account adapters │
+  │ Cost to district   │ 5-figure USD per seat   │ Government-cloud hosted  │
+  │ Query shape        │ Broad exploration       │ One narrow: nearest hop  │
+  └────────────────────┴─────────────────────────┴──────────────────────────┘
+
+  Positioning statement: PHANTASM is a COMPLEMENT to commercial platforms in
+  agencies that can afford them, and a REPLACEMENT for nothing but the manual
+  spreadsheet-and-block-explorer workflow that district cyber cells actually
+  use today.
+
+1.4  PRIMARY VALUE PROPOSITION BY STAKEHOLDER
+
+  LEA Investigating Officer  → From "I don't know how to trace this" to a
+                               signed, filed disclosure request in one session.
+  I4C / MHA                  → National-scale, auditable, uniform tracing
+                               capability without per-seat licensing.
+  Court                      → Evidence whose integrity is independently
+                               verifiable, not vendor-asserted.
+  VASP Compliance Officer    → Precise, evidence-linked requests instead of
+                               vague email escalations.
+  Victim                     → Freeze request reaches the exchange inside the
+                               24–72h window before funds fully disperse.
+
+
+═════════════════════════════════════════════════════════════════════════════
+2.  PROBLEM DEFINITION & EVIDENCE BASE
+═════════════════════════════════════════════════════════════════════════════
+
+2.1  THE GAP NAMED IN SIH26182
+
+  The SAHYOG Portal (live since Oct 2024, operating under Sec 79(3)(b)
+  IT Act 2000, with disclosure requests under Sec 94 BNSS) works when the
+  suspect wallet is HOSTED at an identifiable VASP. It breaks when:
+
+    (a) the wallet is unhosted / non-custodial — nobody to serve;
+    (b) the linked VASP is unknown — no addressee for the request;
+    (c) funds traverse N intermediary wallets before a custodial touchpoint.
+
+  Closing (a)+(b)+(c) currently requires blockchain forensics specialists
+  that district-level cyber cells in India do not have on staff.
+
+2.2  EVIDENCE BASE (carried forward from the idea document — RE-VERIFY)
+
+  ┌──────────────────────────────────────────────┬────────────────────────────┐
+  │ Claim                                        │ Source (verify before use) │
+  ├──────────────────────────────────────────────┼────────────────────────────┤
+  │ ≥ $154B received by illicit addresses, 2025  │ Chainalysis 2026 Crypto    │
+  │ (+162% YoY); stablecoins = 84% illicit vol.  │ Crime Report, 05 Mar 2026  │
+  │ ₹22,845.73 Cr citizen losses in 2024         │ MHA Lok Sabha reply,       │
+  │ (+206% over ₹7,465.18 Cr in 2023)            │ 02 Dec 2025 (L.S.US.Q.432) │
+  │ 36.37 lakh incidents on NCRP + CFCFRMS 2024  │ MHA / I4C                  │
+  │ Suspect Registry: 18.43L identifiers,        │ I4C, launched 10 Sep 2024  │
+  │ 24.67L mule accounts, ₹8,031.56 Cr declined  │                            │
+  │ 49 VDA SPs registered with FIU-IND           │ FIU-IND AR FY2024-25       │
+  │ (45 domestic + 4 offshore), as of Mar 2025   │                            │
+  │ 94 intermediaries onboarded to SAHYOG        │ MediaNama RTI, 22 Dec 2025 │
+  └──────────────────────────────────────────────┴────────────────────────────┘
+
+  PRODUCT IMPLICATION: The VASP registry inside PHANTASM MUST be a live,
+  versioned, admin-editable dataset — never a hardcoded constant — because
+  these counts change monthly.
+
+2.3  THE FOUR STRUCTURAL GAPS → THE FOUR ARCHITECTURAL ANSWERS
+
+  ┌───┬──────────────────────────┬──────────────────────────────────────────┐
+  │ # │ Structural gap           │ PHANTASM's mechanical answer             │
+  ├───┼──────────────────────────┼──────────────────────────────────────────┤
+  │ 1 │ Graph explosion O(b^d)   │ Classify-first: HGT/R-GCN tags terminal  │
+  │   │ at exchange hot wallets  │ VASP nodes as ABSORPTION STATES; PPR +   │
+  │   │ (500k+ counterparties)   │ bidirectional decayed Dijkstra never     │
+  │   │                          │ expands past an absorbing node.          │
+  ├───┼──────────────────────────┼──────────────────────────────────────────┤
+  │ 2 │ Deliberate obfuscation:  │ Neural Hawkes TPP models conditional     │
+  │   │ Sybil change addresses,  │ intensity λ(t); sub-minute self-exciting │
+  │   │ peel chains, smurfing    │ bursts are separated from organic human  │
+  │   │                          │ spend BEFORE the graph is built.         │
+  ├───┼──────────────────────────┼──────────────────────────────────────────┤
+  │ 3 │ Legal disconnect —       │ Merkle-proof-sealed Sec 63 BSA / 65B     │
+  │   │ tools stop at a picture  │ dossier + auto-filled Sec 94 BNSS        │
+  │   │                          │ disclosure request routed via SAHYOG.    │
+  ├───┼──────────────────────────┼──────────────────────────────────────────┤
+  │ 4 │ Chain-model blindness    │ Chain-model router: UTXO adapter         │
+  │   │ (UTXO vs account)        │ (co-spend clustering) vs Account adapter │
+  │   │                          │ (nonce sequencing, fan-in/out, traces).  │
+  └───┴──────────────────────────┴──────────────────────────────────────────┘
+
+2.4  PROBLEM STATEMENT IN MEASURABLE FORM
+
+  Baseline (manual, as-is):
+    - Time from seed address to identified custodial VASP: days to weeks
+    - Requires: specialist analyst, commercial licence, manual form filling
+    - Evidence integrity: analyst's screenshot + narrative affidavit
+    - Reproducibility: none — two analysts produce two different traces
+
+  Target (PHANTASM, to-be):
+    - Time from seed address to draft disclosure request: single session
+    - Requires: trained IO with no blockchain forensics background
+    - Evidence integrity: per-transaction Merkle inclusion proof
+    - Reproducibility: deterministic given (seed, snapshot_id, model_version)
+
+  NOTE ON LATENCY CLAIMS: This PRD deliberately does NOT assert a numeric
+  latency SLO for v1 attribution until it is benchmarked on the prototype.
+  NFR-PERF-001 defines the benchmark procedure; the SLO value is filled in
+  from measurement, not from aspiration.
+
+
+═════════════════════════════════════════════════════════════════════════════
+3.  GOALS, NON-GOALS & GUIDING PRINCIPLES
+═════════════════════════════════════════════════════════════════════════════
+
+3.1  PRODUCT GOALS (ranked; conflicts resolve top-down)
+
+  G1  EVIDENTIARY DEFENSIBILITY over speed.
+      A fast wrong answer destroys the product's legal standing permanently.
+      Every output must survive cross-examination.
+
+  G2  ATTRIBUTION TO THE NEAREST CUSTODIAL HOP, not full ownership clustering.
+      Narrow query = tractable engineering = defensible confidence.
+
+  G3  ZERO-EXPERTISE OPERABILITY.
+      A constable-rank IO with two hours of training must be able to run a
+      complete trace. If a screen requires blockchain literacy, it is a bug.
+
+  G4  HONEST UNCERTAINTY.
+      No binary verdicts. Every attribution carries a calibrated confidence
+      score with a credible interval, and low-confidence results route to
+      mandatory human review.
+
+  G5  HORIZONTAL SCALABILITY BY SHARD, NOT BY REWRITE.
+      Adding chain #7 = adding an adapter + a shard + a worker pool.
+
+  G6  DEFENCE-COUNSEL-PROOF AUDITABILITY.
+      Any third party must be able to re-verify every cited transaction and
+      reconstruct why the system reached its conclusion.
+
+3.2  EXPLICIT NON-GOALS FOR v1
+
+  NG1  Full wallet-ownership clustering / real-world identity attribution.
+       PHANTASM identifies the VASP; the VASP identifies the human via KYC.
+  NG2  De-anonymising a well-operated mixer with high anonymity-set liquidity.
+       We flag, correlate, and score — we do not claim to break it.
+  NG3  Automated freezing or automated legal action without a human signature.
+  NG4  Real-time mempool interception / pre-confirmation action.
+  NG5  Predicting future criminal behaviour or scoring individuals for risk.
+  NG6  Replacing FIU-IND, I4C, or the SAHYOG portal itself.
+  NG7  Privacy-coin tracing (Monero, Zcash shielded pool) — architecturally
+       out of scope and honestly declared as such.
+
+3.3  GUIDING ENGINEERING PRINCIPLES
+
+  P1  IMMUTABLE EVIDENCE, MUTABLE OPINION.
+      Raw on-chain facts and their proofs are append-only and never edited.
+      Classifications, scores, and analyst annotations are versioned opinions
+      layered on top, always separable from the facts in the dossier.
+
+  P2  EVERY NUMBER HAS A PROVENANCE.
+      No figure appears in the UI or a dossier without a source, a fetch
+      timestamp, and a cross-validation status.
+
+  P3  CROSS-VALIDATE OR ABSTAIN.
+      A transaction enters the attribution path only after agreement between
+      ≥2 independent data sources, or it is flagged SINGLE_SOURCE and
+      excluded from the primary evidentiary path.
+
+  P4  DETERMINISM UNDER REPLAY.
+      (seed_address, snapshot_id, model_version, rng_seed) MUST reproduce a
+      byte-identical attribution result. This is a hard requirement because
+      a defence expert will attempt exactly this.
+
+  P5  DEGRADE VISIBLY, NEVER SILENTLY.
+      If an ingestion source is down, if confirmation depth is unmet, if the
+      classifier is below calibration threshold — the UI says so on the
+      artefact itself, not in a log file.
+
+  P6  THE HUMAN IS THE DECIDER.
+      The system produces a recommendation and its reasoning. A warranted
+      officer signs. No exceptions, no auto-action tier.
+
+
+═════════════════════════════════════════════════════════════════════════════
+4.  PERSONAS & STAKEHOLDER MAP
+═════════════════════════════════════════════════════════════════════════════
+
+4.1  PRIMARY PERSONA — "SI RAKESH", DISTRICT CYBER CELL INVESTIGATING OFFICER
+
+  Role            : Sub-Inspector, District Cyber Crime Police Station
+  Technical level : Comfortable with NCRP/CCTNS portals. Has seen a block
+                    explorer once. Cannot read Solidity. Does not know what
+                    a UTXO is and should never need to.
+  Volume          : 15–40 active cyber-fraud cases; 3–8 involve crypto.
+  Time pressure   : Victim funds disperse in 24–72h. Complaint often reaches
+                    him 48h after the theft. He has hours, not days.
+  Current tooling : Block explorer + Excel + WhatsApp group with other cells.
+  Pain            : "I have a wallet address. I don't know which exchange to
+                    write to, or how to prove it in court."
+  Success for him : A signed PDF he can attach to the case diary, and a
+                    disclosure request already addressed to the right nodal
+                    officer.
+  Failure mode he fears : Sending a freeze request to the wrong exchange and
+                    being blamed for it.
+
+4.2  SECONDARY PERSONA — "ANALYST PRIYA", I4C / STATE CYBER HQ ANALYST
+
+  Role            : Technical analyst, state nodal cyber unit.
+  Technical level : Reads block explorers fluently; understands mixers,
+                    bridges, peel chains. Has used Chainalysis at a training.
+  Needs           : Override authority, raw evidence access, path comparison,
+                    ability to reject a machine attribution with a reason.
+  Success for her : Triage 40 machine-generated traces per day and escalate
+                    the 6 that matter, with an audit trail of her reasoning.
+  Failure mode she fears : A black box she has to defend in court.
+
+4.3  TERTIARY PERSONA — "DSP MENON", SUPERVISORY / APPROVING OFFICER
+
+  Role            : Approves and digitally signs outbound legal instruments.
+  Technical level : Legally literate, technically non-specialist.
+  Needs           : A one-page summary; the confidence score; what could be
+                    wrong; who reviewed it; a signature action with 2FA.
+  Success for him : Sign with justified confidence in under 5 minutes.
+
+4.4  EXTERNAL PERSONA — "COMPLIANCE OFFICER ANJALI", FIU-IND-REGISTERED VASP
+
+  Role            : Nodal officer receiving SAHYOG disclosure requests.
+  Needs           : Unambiguous identification of the deposit address and
+                    the exact transactions of interest; correct legal
+                    citation; a machine-readable payload she can ingest.
+  Failure mode she fears : Over-broad requests forcing manual triage of
+                    thousands of unrelated accounts.
+
+4.5  ADVERSARIAL PERSONA — "DEFENCE COUNSEL"
+
+  Not a user, but a design constraint. Will attempt, in court:
+    - "Your Honour, this is machine-generated speculation."
+      → Answer: confidence score + credible interval + human sign-off record.
+    - "Can the defence independently verify transaction X was in block Y?"
+      → Answer: yes — here is the Merkle inclusion proof and the algorithm.
+    - "Was the model trained on data that biases it against my client?"
+      → Answer: model card, training data provenance, version pinned in the
+        dossier, reproducible replay.
+    - "The chain reorganised; that block is orphaned."
+      → Answer: confirmation-depth filter with per-chain minimums, recorded.
+
+4.6  ADVERSARIAL PERSONA — "THE LAUNDERER"
+
+  Also a design constraint. Assumes PHANTASM exists and adapts:
+    - Increases hop count and per-hop fan-out → PPR decay handles depth,
+      but recall degrades; must be measured and reported honestly.
+    - Uses fresh zero-history wallets → TGN dynamic memory + structural
+      features; accuracy WILL be lower and MUST be surfaced.
+    - Times deposits to blend with organic volume → Hawkes false-negative
+      rate must be characterised, not assumed away.
+    - Uses cross-chain bridges → typed bridge edges in the shard index.
+
+4.7  STAKEHOLDER RACI (system-level)
+
+  ┌──────────────────────────┬─────┬─────┬─────┬─────┐
+  │ Decision                 │ IO  │ ANL │ DSP │ I4C │
+  ├──────────────────────────┼─────┼─────┼─────┼─────┤
+  │ Open a case              │  R  │  I  │  I  │  I  │
+  │ Launch a trace           │  R  │  R  │  I  │  I  │
+  │ Accept/reject attribution│  C  │  R  │  A  │  I  │
+  │ Generate dossier         │  R  │  R  │  A  │  I  │
+  │ Sign & dispatch to VASP  │  C  │  C  │  A/R│  I  │
+  │ Edit VASP registry       │  -  │  C  │  C  │ A/R │
+  │ Promote a model version  │  -  │  C  │  I  │ A/R │
+  └──────────────────────────┴─────┴─────┴─────┴─────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+5.  USER JOURNEYS (NARRATIVE)
+═════════════════════════════════════════════════════════════════════════════
+
+5.1  JOURNEY A — "THE GOLDEN PATH" (happy case, domestic VASP)
+
+  T+00:00  Victim files NCRP complaint: ₹18L transferred to a wallet after
+           an investment-scam call. Complaint carries one BTC address.
+  T+00:05  SI Rakesh opens PHANTASM, creates Case, pastes the address,
+           selects chain = auto-detect, sets case type = INVESTMENT_FRAUD.
+  T+00:06  System validates checksum, detects Bitcoin (Base58/Bech32), warns
+           that the address has 412 transactions and a trace may take longer.
+  T+00:07  Trace launched. Live progress panel: INGESTING → PRUNING →
+           CLASSIFYING → SEARCHING → SCORING.
+  T+00:xx  Result: 4-hop path terminating at a deposit address classified
+           VASP_DEPOSIT with 91.3% confidence [CI 87.1–94.0], attributed to a
+           FIU-IND-registered domestic exchange. Two alternate paths shown
+           at 62% and 48%.
+  T+00:xx  Rakesh inspects the graph. Hop 2 is flagged PEEL_CHAIN by the
+           Hawkes module; hop 3 is a CHANGE_ADDRESS by co-spend heuristic.
+           He opens hop 4, sees the Merkle proof status = VERIFIED, and the
+           cross-validation badge = ETHERSCAN+BLOCKCHAIR AGREE.
+  T+00:xx  He clicks GENERATE DOSSIER. PDF assembles: trace narrative, hop
+           table, per-tx Merkle proofs, Sec 63 BSA certificate, model card,
+           confidence methodology.
+  T+00:xx  He clicks PREPARE DISCLOSURE REQUEST. Sec 94 BNSS form pre-filled
+           with exchange name, nodal officer, deposit address, tx hashes,
+           time window, and requested fields (KYC, IP logs, linked bank).
+  T+00:xx  DSP Menon reviews the one-page summary, applies digital signature
+           with 2FA, dispatches via the SAHYOG connector. Status → SUBMITTED.
+  T+xx     VASP acknowledges. Status → ACKNOWLEDGED. SLA timer starts.
+
+5.2  JOURNEY B — "THE MIXER WALL" (honest failure)
+
+  Trace runs three hops and terminates at a contract classified MIXER with
+  96% confidence. The engine does NOT fabricate a path through it. Instead:
+    - Path status = TERMINATED_AT_OBFUSCATOR
+    - Deposit timestamp, denomination, and chain recorded
+    - Temporal correlation module lists candidate withdrawal events in the
+      correlation window with individually low confidences (e.g. 21%, 17%)
+    - UI banner: "Trace terminated at a mixing service. Correlation
+      candidates below the action threshold. Recommended next step: preserve
+      order to the mixer's front-end operator if identifiable; MLAT if
+      offshore."
+    - Dossier still generated — documenting the mixer deposit as a fact, with
+      Merkle proof, because proving funds entered a mixer is itself evidence.
+  DESIGN INTENT: the product's credibility is built in this journey, not
+  journey A. Failing loudly and usefully is a feature.
+
+5.3  JOURNEY C — "THE OFFSHORE TERMINUS"
+
+  Path terminates at a non-FIU-IND exchange. System sets jurisdiction flag =
+  OFFSHORE_NON_REGISTERED, suppresses the SAHYOG dispatch action, and instead
+  offers the MLAT/Interpol packet template with an estimated processing
+  timeline field and the exchange's published LEA-contact channel if known.
+
+5.4  JOURNEY D — "THE ANALYST OVERRIDE"
+
+  Analyst Priya reviews a 58%-confidence attribution. She recognises hop 3 as
+  an OTC desk misclassified as a mule wallet. She reclassifies the node with
+  a written justification, which:
+    - creates an immutable audit entry (who, when, from → to, why)
+    - triggers a re-score of the path (not a re-ingest)
+    - queues the node as a candidate training label for the next model
+      version, pending curator approval
+    - is disclosed in the dossier as a HUMAN OVERRIDE with her rank and ID
+  The system NEVER silently absorbs a human correction into evidence.
+
+5.5  JOURNEY E — "THE REORG"
+
+  Between trace and dossier generation, a Bitcoin block containing hop 2
+  is orphaned. The daily re-validation job detects the block hash change,
+  marks the transaction REORGED, invalidates the dossier hash, and raises a
+  P1 alert on the case with a mandatory re-trace prompt. If a disclosure
+  request was already dispatched, an ERRATUM notice is generated for the VASP.
+
+
+═════════════════════════════════════════════════════════════════════════════
+6.  EPICS & USER STORIES WITH ACCEPTANCE CRITERIA
+═════════════════════════════════════════════════════════════════════════════
+
+EPIC-01  CASE INTAKE & SEED MANAGEMENT
+EPIC-02  MULTI-CHAIN INGESTION
+EPIC-03  TEMPORAL NOISE PRUNING
+EPIC-04  ENTITY CLASSIFICATION
+EPIC-05  PATH ATTRIBUTION
+EPIC-06  CONFIDENCE & HUMAN REVIEW
+EPIC-07  EVIDENCE SEALING & DOSSIER
+EPIC-08  SAHYOG DISCLOSURE PIPELINE
+EPIC-09  ADMINISTRATION, RBAC & AUDIT
+EPIC-10  MODEL LIFECYCLE & MLOPS
+
+─────────────────────────────────────────────────────────────────────────────
+US-CAS-001  |  P0  |  Create a case from a suspect address
+─────────────────────────────────────────────────────────────────────────────
+  AS AN     investigating officer
+  I WANT    to create a case with an FIR/NCRP reference and one or more
+            suspect wallet addresses
+  SO THAT   every subsequent trace is legally bound to a specific
+            investigation and is not a fishing expedition.
+
+  ACCEPTANCE CRITERIA
+    AC1  GIVEN a valid FIR number and at least one address,
+         WHEN I submit the case creation form,
+         THEN a case is created with status DRAFT and a system-generated
+              case reference of form PHM-<YYYY>-<STATE>-<NNNNNN>.
+    AC2  GIVEN an address failing checksum validation for every supported
+         chain, WHEN I submit, THEN creation is rejected with a message
+         naming the specific validation failure per chain attempted.
+    AC3  GIVEN a case without a lawful-authority field (FIR / NCRP ack /
+         written authorisation ID), WHEN I attempt to launch a trace,
+         THEN the trace action is DISABLED with an explanatory tooltip.
+    AC4  All case creation events are written to the immutable audit log
+         with actor, timestamp, source IP, and payload hash.
+    AC5  Duplicate detection: if the same seed address exists in another
+         open case, the UI surfaces a non-blocking cross-case link banner
+         subject to the requester's jurisdictional visibility scope.
+
+─────────────────────────────────────────────────────────────────────────────
+US-ING-002  |  P0  |  Automatic chain detection and adapter routing
+─────────────────────────────────────────────────────────────────────────────
+  AS AN     investigating officer with no blockchain knowledge
+  I WANT    the system to determine which blockchain an address belongs to
+  SO THAT   I never have to choose "UTXO" or "account-based".
+
+  ACCEPTANCE CRITERIA
+    AC1  Bech32 / Base58Check with BTC version bytes → BITCOIN (UTXO adapter).
+    AC2  0x-prefixed 20-byte hex → ambiguous across ETH/BNB/POLYGON; system
+         probes activity on each and presents a disambiguation choice ranked
+         by transaction count, defaulting to the highest-activity chain.
+    AC3  Base58 starting with 'T', 34 chars → TRON (UTXO-family adapter for
+         TRX native, account semantics for TRC-20 — documented explicitly).
+    AC4  Base58 32-byte Ed25519 pubkey → SOLANA (account adapter).
+    AC5  Unrecognised format → explicit rejection listing all attempted
+         validations. No silent "best guess".
+    AC6  Detection result, including ambiguity resolution and who resolved
+         it, is recorded in the trace provenance record.
+
+─────────────────────────────────────────────────────────────────────────────
+US-ING-003  |  P0  |  Cross-validated multi-source ingestion
+─────────────────────────────────────────────────────────────────────────────
+  AS A      prosecutor relying on this evidence
+  I WANT    every transaction to be corroborated by at least two independent
+            data providers
+  SO THAT   a single provider's error or compromise cannot poison a case.
+
+  ACCEPTANCE CRITERIA
+    AC1  Each transaction record carries a `sources[]` array with provider,
+         fetch timestamp, and response digest.
+    AC2  Agreement is computed over a canonical field subset: {tx_hash,
+         block_height, block_hash, from, to, value, asset, timestamp}.
+    AC3  Full agreement → validation_status = CROSS_VALIDATED.
+         Disagreement → CONFLICTED, excluded from the primary path,
+         surfaced in a conflicts panel with a field-level diff.
+         Only one source available → SINGLE_SOURCE, admissible in the graph
+         but flagged in the dossier and excluded from confidence uplift.
+    AC4  A CONFLICTED transaction MUST NOT appear in a generated dossier's
+         primary evidence table without an explicit analyst acknowledgement
+         recorded by ID.
+
+─────────────────────────────────────────────────────────────────────────────
+US-ING-004  |  P0  |  Confirmation-depth finality gate
+─────────────────────────────────────────────────────────────────────────────
+  AS A      case officer
+  I WANT    reorg-vulnerable transactions excluded from my evidence
+  SO THAT   my case is not built on a block that later disappears.
+
+  ACCEPTANCE CRITERIA
+    AC1  Per-chain minimum confirmation depth is configuration-driven, not
+         hardcoded. Defaults: BTC 6, ETH 12 (or finalized epoch), BNB 15,
+         POLYGON 128, TRON 19 (2/3+1 SR confirmations), SOLANA finalized
+         commitment.
+    AC2  Transactions below the threshold are ingested and visible but
+         tagged PENDING_FINALITY and are excluded from any attribution path
+         and any dossier.
+    AC3  A scheduled re-validation job re-checks block hashes for all
+         dossier-cited transactions; a mismatch sets REORGED and raises a
+         P1 case alert.
+    AC4  The dossier prints the confirmation depth actually observed for
+         each cited transaction at generation time.
+
+─────────────────────────────────────────────────────────────────────────────
+US-TPP-005  |  P0  |  Temporal pruning of obfuscation noise
+─────────────────────────────────────────────────────────────────────────────
+  AS AN     analyst
+  I WANT    dust, bot bursts and structuring noise separated from meaningful
+            value flow before the graph is searched
+  SO THAT   the attribution path reflects the money, not the smoke.
+
+  ACCEPTANCE CRITERIA
+    AC1  The Hawkes module returns, per node, a conditional intensity series
+         and a burst-classification among {ORGANIC, PEEL_CHAIN, SMURFING,
+         BOT_BURST, DUST_STORM}.
+    AC2  Edges pruned are never deleted — they are marked `pruned=true` with
+         `prune_reason` and remain retrievable in the "show pruned" view.
+    AC3  Pruning parameters (μ, α, β estimation window, dust threshold per
+         asset) are recorded in the trace provenance for reproducibility.
+    AC4  Turning pruning OFF and re-running MUST be possible from the UI and
+         MUST produce a separately versioned trace, not overwrite the first.
+
+─────────────────────────────────────────────────────────────────────────────
+US-CLS-006  |  P0  |  Classify intermediary entities before search
+─────────────────────────────────────────────────────────────────────────────
+  AS THE    attribution engine
+  I WANT    every reachable node labelled by type before path search runs
+  SO THAT   high-degree exchange nodes act as absorption states and the
+            search does not explode combinatorially.
+
+  ACCEPTANCE CRITERIA
+    AC1  Supported labels: EOA_PERSONAL, MULE, VASP_DEPOSIT, VASP_HOT,
+         VASP_COLD, MIXER, BRIDGE, DEX_ROUTER, DEX_POOL, STAKING, CONTRACT_
+         OTHER, MERCHANT_PSP, GAMBLING, UNKNOWN.
+    AC2  Every classification carries a probability vector, the model
+         version, and the feature-set version.
+    AC3  A node classified VASP_* with p ≥ configured absorption threshold
+         is marked as an absorption state and is NOT expanded further.
+    AC4  Nodes with max-probability below the abstention threshold are
+         labelled UNKNOWN rather than forced into a class.
+    AC5  Contract nodes are additionally checked against a bytecode-signature
+         index (mixer/bridge/router families) and the signature match is
+         reported as an independent corroborating feature, not folded
+         silently into the model score.
+
+─────────────────────────────────────────────────────────────────────────────
+US-ATT-007  |  P0  |  Nearest-custodial-hop path search
+─────────────────────────────────────────────────────────────────────────────
+  AS AN     investigating officer
+  I WANT    the shortest high-value path from my seed to the first custodial
+            VASP
+  SO THAT   I know exactly whom to serve legally.
+
+  ACCEPTANCE CRITERIA
+    AC1  The engine returns a ranked list of up to K candidate paths
+         (default K=3), each with hop list, aggregate confidence, total
+         value traced, and elapsed on-chain time.
+    AC2  Edge weights apply exponential decay by transfer age and inverse
+         weighting by value share, with parameters recorded in provenance.
+    AC3  Search terminates on: absorption state reached, max depth reached
+         (default 12, configurable), traced-value fraction below floor,
+         or wall-clock budget exceeded — and the termination reason is
+         reported in the result, always.
+    AC4  On a seed with no custodial terminus within budget, the result is
+         NO_PATH_FOUND with the frontier state preserved for resumption,
+         NOT an empty screen.
+    AC5  Same input + same snapshot + same model version + same rng seed
+         MUST produce identical output (determinism requirement P4).
+
+─────────────────────────────────────────────────────────────────────────────
+US-CNF-008  |  P0  |  Calibrated confidence with mandatory review gate
+─────────────────────────────────────────────────────────────────────────────
+  AS A      supervisory officer
+  I WANT    a calibrated probability, not a vendor's adjective
+  SO THAT   I can decide whether to sign a legal instrument.
+
+  ACCEPTANCE CRITERIA
+    AC1  Monte Carlo RWR produces a point estimate and a credible interval
+         at a configurable level (default 95%), with the sample count
+         recorded.
+    AC2  Below the action threshold (configurable, default 75%), the
+         dispatch action is DISABLED and the case routes to REVIEW_REQUIRED.
+    AC3  The UI shows the confidence as a distribution, not only a number,
+         and states plainly what the number means and does not mean.
+    AC4  A calibration report (reliability curve, Brier score, ECE) for the
+         active model version is retrievable from the UI and is embedded by
+         reference in every dossier.
+    AC5  Confidence MUST NOT be presented as a percentage likelihood of
+         guilt. Microcopy is fixed: "confidence that this path terminates at
+         the identified custodial service", nothing broader.
+
+─────────────────────────────────────────────────────────────────────────────
+US-EVD-009  |  P0  |  Merkle-proof-sealed evidence trail
+─────────────────────────────────────────────────────────────────────────────
+  AS A      court / defence counsel / auditor
+  I WANT    to independently verify each cited transaction's inclusion in its
+            cited block
+  SO THAT   I do not have to trust the tool's assertion.
+
+  ACCEPTANCE CRITERIA
+    AC1  For every cited transaction, the dossier includes: tx hash, block
+         height, block hash, Merkle root, the sibling-hash path with
+         left/right ordering, and the exact hashing algorithm (double-SHA256
+         for BTC-family; the correct receipts/transactions trie proof form
+         for account-family chains, explicitly named per chain).
+    AC2  A standalone verifier utility (offline, dependency-light, source
+         published in the dossier appendix) can validate every proof.
+    AC3  Where a chain's structure makes a classic Merkle inclusion proof
+         inapplicable, the dossier MUST state the alternative integrity
+         mechanism used rather than presenting a misleading proof. Honest
+         labelling is mandatory — this is a legal exposure point.
+    AC4  The dossier itself is hashed; the hash is recorded in the audit log
+         and printed on the cover page for tamper evidence.
+    AC5  A dossier whose underlying transactions later REORG is marked
+         SUPERSEDED and cannot be re-downloaded without a warning banner.
+
+─────────────────────────────────────────────────────────────────────────────
+US-EVD-010  |  P0  |  Section 63 BSA / 65B certificate generation
+─────────────────────────────────────────────────────────────────────────────
+  AS A      prosecutor
+  I WANT    a properly formed electronic-evidence certificate
+  SO THAT   the trace is admissible without a separate expert affidavit for
+            the mechanics of production.
+
+  ACCEPTANCE CRITERIA
+    AC1  The certificate names the computer system producing the output, the
+         period of regular use, the lawful authority reference, and the
+         certifying officer with rank and designation.
+    AC2  The certifying officer's identity is bound to an authenticated
+         session and a digital signature, never typed free-text.
+    AC3  The certificate template is versioned and admin-updatable without a
+         code deploy, because statutory formats change.
+    AC4  DISCLAIMER REQUIREMENT: the product ships with written guidance that
+         the certificate format must be reviewed by the deploying agency's
+         legal cell before operational use. The software does not assert
+         legal sufficiency on its own authority.
+
+─────────────────────────────────────────────────────────────────────────────
+US-SHY-011  |  P0  |  Pre-filled, routed disclosure request
+─────────────────────────────────────────────────────────────────────────────
+  AS AN     investigating officer
+  I WANT    the Sec 94 BNSS / 79(3)(b) request auto-filled and addressed to
+            the correct nodal officer
+  SO THAT   I do not lose hours to form-filling and addressing errors.
+
+  ACCEPTANCE CRITERIA
+    AC1  Auto-filled fields: VASP legal entity, FIU-IND registration ID,
+         nodal officer contact, deposit address, transaction hashes, time
+         window, requested data categories, case reference, statutory basis.
+    AC2  Every auto-filled field is editable with a change-tracked diff
+         against the machine-proposed value.
+    AC3  Dispatch requires: confidence ≥ threshold, dossier generated,
+         supervisory digital signature, and an explicit confirmation dialog
+         naming the recipient exchange.
+    AC4  Request lifecycle states: DRAFT → PENDING_APPROVAL → SIGNED →
+         SUBMITTED → ACKNOWLEDGED → RESPONDED → CLOSED, plus REJECTED and
+         WITHDRAWN, each with timestamps and SLA timers.
+    AC5  For SIH prototype: a SAHYOG MOCK CONNECTOR with an identical
+         interface contract MUST be used, and the UI MUST visibly label the
+         environment as MOCK. Never demo a fake live-government integration
+         without that label.
+
+─────────────────────────────────────────────────────────────────────────────
+US-SHY-012  |  P1  |  Jurisdiction routing (domestic vs offshore)
+─────────────────────────────────────────────────────────────────────────────
+  ACCEPTANCE CRITERIA
+    AC1  Terminal VASP is matched against the versioned FIU-IND registry.
+    AC2  REGISTERED → SAHYOG route enabled with the applicable statutory
+         basis pre-selected.
+    AC3  NOT_REGISTERED / OFFSHORE → SAHYOG dispatch suppressed; MLAT /
+         Interpol packet path offered, with a jurisdiction note and any
+         known LEA-contact channel for that exchange.
+    AC4  UNKNOWN_ENTITY → neither route; case flagged for I4C escalation to
+         determine the entity.
+    AC5  Registry entries carry effective_from / effective_to dates so that
+         a historical trace is evaluated against the registry as it stood
+         at the time of the offence where relevant.
+
+─────────────────────────────────────────────────────────────────────────────
+US-UIX-013  |  P0  |  Interactive attribution graph canvas
+─────────────────────────────────────────────────────────────────────────────
+  ACCEPTANCE CRITERIA
+    AC1  Renders ≥ 5,000 nodes / 15,000 edges at ≥ 30 FPS on integrated
+         graphics via WebGL, with progressive loading beyond that.
+    AC2  Node visual encoding: shape = node type, colour = classification
+         family, border = confidence band, badge = flags (mixer, bridge,
+         pruned, conflicted, pending finality).
+    AC3  Click a node → side drawer with classification vector, features
+         that drove it, on-chain summary, cross-validation status, and
+         "reclassify" action gated by role.
+    AC4  The primary attribution path is visually dominant; alternates are
+         toggleable; pruned subgraph is hidden by default and one click away.
+    AC5  Full keyboard navigation and a mandatory non-graph TABLE VIEW of the
+         same data for accessibility and for officers who prefer tables.
+
+─────────────────────────────────────────────────────────────────────────────
+US-ADM-014  |  P0  |  Role-based access control and jurisdictional scoping
+─────────────────────────────────────────────────────────────────────────────
+  ACCEPTANCE CRITERIA
+    AC1  Roles: IO, ANALYST, SUPERVISOR, LEGAL, ADMIN, AUDITOR, MODEL_CURATOR.
+    AC2  Case visibility defaults to the owning unit's jurisdiction; cross-
+         jurisdiction access requires an explicit, logged, time-bounded grant.
+    AC3  AUDITOR is read-only across all cases and cannot be granted write.
+    AC4  No role can delete or edit an audit record. No exceptions, including
+         ADMIN. Enforced at the database layer, not only in application code.
+    AC5  Every privileged action requires re-authentication if the session
+         is older than a configurable window.
+
+─────────────────────────────────────────────────────────────────────────────
+US-ADM-015  |  P0  |  Immutable, exportable audit trail
+─────────────────────────────────────────────────────────────────────────────
+  ACCEPTANCE CRITERIA
+    AC1  Append-only audit log with a hash chain: each entry includes the
+         previous entry's hash, making silent tampering detectable.
+    AC2  Logged events include at minimum: authentication, case CRUD, trace
+         launch, parameter change, classification override, dossier
+         generation, signature, dispatch, registry edit, model promotion,
+         data export, and permission grant.
+    AC3  A daily audit-chain integrity check runs and alerts on mismatch.
+    AC4  Auditors can export a signed audit extract scoped to one case.
+
+─────────────────────────────────────────────────────────────────────────────
+US-MLP-016  |  P1  |  Model versioning, model cards, and safe promotion
+─────────────────────────────────────────────────────────────────────────────
+  ACCEPTANCE CRITERIA
+    AC1  Every model artefact is immutable and content-addressed by hash.
+    AC2  A model card is mandatory before promotion: training data, label
+         provenance, class balance, metrics with confidence intervals, known
+         failure modes, and an explicit statement of what the model must not
+         be used for.
+    AC3  Promotion to ACTIVE requires MODEL_CURATOR role plus a second
+         approver, and is fully audit-logged.
+    AC4  Every trace pins the exact model versions used; superseding a model
+         NEVER retroactively alters a completed trace or a generated dossier.
+    AC5  Shadow evaluation: a candidate model may run alongside the active
+         model on live traffic with outputs recorded and not surfaced, for
+         a configured evaluation window, before promotion is permitted.
+
+─────────────────────────────────────────────────────────────────────────────
+US-OBS-017  |  P1  |  Trace explainability record
+─────────────────────────────────────────────────────────────────────────────
+  ACCEPTANCE CRITERIA
+    AC1  For every attribution, the system stores the top-N features and
+         attention/relation contributions that drove each hop's inclusion.
+    AC2  The dossier contains a plain-language explanation section generated
+         from that record, written at a non-specialist reading level.
+    AC3  Explanations MUST be faithful to the model's actual computation, not
+         post-hoc narrative text generated independently of it. If a faithful
+         explanation is unavailable for a component, the dossier says so.
+
+
+═════════════════════════════════════════════════════════════════════════════
+7.  FUNCTIONAL REQUIREMENTS (FR)
+═════════════════════════════════════════════════════════════════════════════
+
+7.1  INGESTION & CHAIN ADAPTERS
+
+  FR-ING-001  P0  The system SHALL support Bitcoin, Ethereum, BNB Chain,
+                  Polygon, Tron and Solana in v1, with an adapter interface
+                  that permits a new chain to be added without modifying core
+                  services.
+  FR-ING-002  P0  The system SHALL implement a ChainAdapter contract exposing
+                  at minimum: detect_address(), fetch_address_activity(),
+                  fetch_transaction(), fetch_block_header(), get_finality_
+                  depth(), build_inclusion_proof(), normalise_to_canonical().
+  FR-ING-003  P0  The UTXO adapter SHALL implement co-spend (multi-input)
+                  clustering and change-address heuristics, and SHALL record
+                  which heuristic produced each inferred link.
+  FR-ING-004  P0  The account adapter SHALL implement nonce sequencing,
+                  fan-in/fan-out profiling, internal-call (trace) expansion,
+                  and token-transfer log decoding for ERC-20/TRC-20/SPL.
+  FR-ING-005  P0  All ingested data SHALL be normalised into a single
+                  canonical transaction schema before entering the graph.
+  FR-ING-006  P0  The system SHALL query ≥2 independent providers per
+                  transaction and record per-provider responses.
+  FR-ING-007  P0  The system SHALL enforce per-provider rate limits with
+                  token-bucket throttling, exponential backoff with jitter,
+                  and automatic failover ordering by provider health score.
+  FR-ING-008  P0  The system SHALL cache immutable on-chain facts
+                  indefinitely and mutable facts (balances, pending state)
+                  with short TTLs, and SHALL never serve a cached value into
+                  a dossier without recording the original fetch timestamp.
+  FR-ING-009  P1  The system SHALL support ingesting an address list in bulk
+                  (CSV) for multi-seed cases.
+  FR-ING-010  P1  The system SHALL detect and label token-approval and
+                  contract-interaction events distinctly from value transfers.
+  FR-ING-011  P2  The system SHOULD support a self-hosted full-node source as
+                  a provider implementation for agencies that operate nodes.
+
+7.2  GRAPH STORE & SHARDING
+
+  FR-GRF-001  P0  The graph store SHALL be partitioned by chain, one logical
+                  shard per chain, addressable through a routing layer.
+  FR-GRF-002  P0  Address-to-shard routing SHALL use consistent hashing over
+                  (chain_id) such that adding a chain does not rebalance
+                  existing shards.
+  FR-GRF-003  P0  A cross-chain BRIDGE INDEX SHALL maintain pre-labelled
+                  bridge and swap contract addresses on both source and
+                  destination chains, enabling a typed cross-shard edge.
+  FR-GRF-004  P0  The graph SHALL be a heterogeneous multigraph supporting
+                  multiple typed edges between the same node pair.
+  FR-GRF-005  P0  Node and edge writes SHALL be idempotent, keyed on natural
+                  on-chain identifiers, so replays cannot duplicate evidence.
+  FR-GRF-006  P1  The system SHALL support point-in-time graph snapshots
+                  identified by snapshot_id for reproducible replay.
+  FR-GRF-007  P1  Hot subgraphs SHALL be cached in an in-process graph
+                  structure for search-time performance.
+
+7.3  TEMPORAL POINT PROCESS
+
+  FR-TPP-001  P0  The system SHALL fit a Hawkes-family conditional intensity
+                  model per node over its transaction event stream.
+  FR-TPP-002  P0  The system SHALL classify temporal patterns into ORGANIC,
+                  PEEL_CHAIN, SMURFING, BOT_BURST, DUST_STORM with a score.
+  FR-TPP-003  P0  Pruning SHALL be non-destructive (soft flags only).
+  FR-TPP-004  P0  All TPP hyperparameters SHALL be recorded per trace.
+  FR-TPP-005  P1  The system SHOULD support a neural Hawkes variant as an
+                  alternative estimator selectable by configuration, with
+                  comparative metrics recorded.
+  FR-TPP-006  P1  Dust thresholds SHALL be per-asset and configurable, and
+                  SHALL account for the asset's decimal precision and typical
+                  network fee rather than a single global constant.
+
+7.4  NODE CLASSIFICATION
+
+  FR-CLS-001  P0  The system SHALL classify nodes using a heterogeneous graph
+                  model with type-dependent attention (HGT) over the typed
+                  multigraph.
+  FR-CLS-002  P0  The system SHALL apply relational aggregation (R-GCN) to
+                  preserve directional relation semantics across edge types.
+  FR-CLS-003  P0  The system SHALL maintain per-node dynamic memory (TGN)
+                  updated on new confirmed transactions, enabling
+                  classification of wallets absent from training data.
+  FR-CLS-004  P0  Every classification SHALL emit a full probability vector,
+                  not only an argmax label.
+  FR-CLS-005  P0  The system SHALL implement an abstention threshold below
+                  which the label is UNKNOWN.
+  FR-CLS-006  P0  Contract nodes SHALL be additionally screened against a
+                  bytecode/selector-signature index for mixer, bridge, router
+                  and pool families, reported as an independent signal.
+  FR-CLS-007  P1  Classifications SHALL be re-computable on demand against a
+                  newer model version, producing a NEW versioned record and
+                  never mutating a historical one.
+  FR-CLS-008  P1  The system SHALL support human override with mandatory
+                  justification text and role gating.
+  FR-CLS-009  P2  The system SHOULD support chain-conditioned shared
+                  embeddings to transfer learned structure across chain
+                  families without full per-chain retraining.
+
+7.5  PATH ATTRIBUTION
+
+  FR-ATT-001  P0  The engine SHALL execute personalised PageRank seeded at
+                  the suspect address to restrict the search frontier.
+  FR-ATT-002  P0  The engine SHALL run bidirectional shortest-path search
+                  with exponential time decay and value-share weighting.
+  FR-ATT-003  P0  Nodes classified as custodial VASP above the absorption
+                  threshold SHALL be treated as absorbing states and never
+                  expanded.
+  FR-ATT-004  P0  The engine SHALL return the top-K ranked paths with per-hop
+                  evidence references.
+  FR-ATT-005  P0  Every terminated search SHALL report a termination reason.
+  FR-ATT-006  P0  A hard wall-clock budget and a hard node-expansion budget
+                  SHALL both be enforced.
+  FR-ATT-007  P1  The engine SHALL support "continue from frontier" to extend
+                  a previously budget-terminated search without restarting.
+  FR-ATT-008  P1  The engine SHALL trace value flow with a documented
+                  attribution accounting method (e.g. proportional /
+                  FIFO / poison), with the chosen method named in the dossier
+                  because different methods produce different results and a
+                  court will ask.
+
+7.6  CONFIDENCE SCORING
+
+  FR-CNF-001  P0  Confidence SHALL be estimated by Monte Carlo random walks
+                  with restart over the classified subgraph.
+  FR-CNF-002  P0  Output SHALL include a point estimate, a credible interval,
+                  and the sample count.
+  FR-CNF-003  P0  Sampling SHALL use a recorded RNG seed for reproducibility.
+  FR-CNF-004  P0  A configurable action threshold SHALL gate dispatch.
+  FR-CNF-005  P1  The system SHALL produce and expose a calibration report
+                  per model version.
+  FR-CNF-006  P1  Confidence SHALL decompose into contributing factors
+                  (classification certainty, data corroboration, temporal
+                  coherence, path length penalty, obfuscation penalty) and
+                  the decomposition SHALL be shown in the UI.
+
+7.7  EVIDENCE & DOSSIER
+
+  FR-EVD-001  P0  The system SHALL construct and store a Merkle inclusion
+                  proof for every transaction cited in an attribution path.
+  FR-EVD-002  P0  The system SHALL verify each proof at generation time and
+                  record the verification result.
+  FR-EVD-003  P0  The dossier SHALL contain: cover page with dossier hash,
+                  case metadata, statutory certificate, methodology summary,
+                  hop-by-hop table, per-hop evidence with proofs, confidence
+                  section, model cards by reference, limitations section,
+                  and an appendix with the independent verifier's algorithm.
+  FR-EVD-004  P0  The dossier SHALL contain an explicit LIMITATIONS section
+                  in every instance. It is not optional, not collapsible, and
+                  not removable by the user.
+  FR-EVD-005  P0  Generated dossiers SHALL be immutable and content-addressed.
+  FR-EVD-006  P0  Regeneration SHALL create a new version linked to the prior
+                  version with a stated reason.
+  FR-EVD-007  P1  The dossier SHALL be produced in English and SHOULD support
+                  Hindi and one additional regional language for the
+                  narrative sections.
+  FR-EVD-008  P1  A machine-readable JSON evidence bundle SHALL accompany the
+                  PDF for downstream systems.
+
+7.8  SAHYOG & LEGAL PIPELINE
+
+  FR-SHY-001  P0  The system SHALL maintain a versioned VASP registry with
+                  FIU-IND registration status, nodal officer contacts,
+                  accepted request channels, and effective date ranges.
+  FR-SHY-002  P0  The system SHALL auto-populate the disclosure request from
+                  case and trace data with per-field provenance.
+  FR-SHY-003  P0  The system SHALL require supervisory digital signature
+                  before dispatch.
+  FR-SHY-004  P0  The system SHALL implement the SAHYOG connector behind an
+                  interface with a MOCK implementation for non-production
+                  environments, visibly labelled in the UI.
+  FR-SHY-005  P0  Request lifecycle states and SLA timers SHALL be tracked
+                  and visible.
+  FR-SHY-006  P1  The system SHALL generate MLAT/Interpol packets for
+                  offshore termini.
+  FR-SHY-007  P1  The system SHALL support ingesting the VASP's response and
+                  attaching it to the case.
+  FR-SHY-008  P2  The system SHOULD support bulk dispatch for multi-VASP
+                  cases with per-recipient scoping so no VASP receives data
+                  about another VASP's customers.
+
+7.9  CASE MANAGEMENT
+
+  FR-CAS-001  P0  Cases SHALL support multiple seed addresses, multiple
+                  traces, and multiple dossiers with clear lineage.
+  FR-CAS-002  P0  Case status model: DRAFT → ACTIVE → REVIEW_REQUIRED →
+                  ATTRIBUTED → DISPATCHED → RESPONDED → CLOSED / ARCHIVED,
+                  plus SUSPENDED and REOPENED.
+  FR-CAS-003  P0  All case artefacts SHALL be exportable as a single signed
+                  archive for handover to a court or another agency.
+  FR-CAS-004  P1  Cross-case correlation SHALL surface shared addresses
+                  subject to jurisdictional visibility rules.
+  FR-CAS-005  P1  Case timeline SHALL show every material event in one view.
+
+7.10 ADMINISTRATION & OBSERVABILITY
+
+  FR-ADM-001  P0  RBAC with the roles defined in US-ADM-014.
+  FR-ADM-002  P0  Immutable hash-chained audit log.
+  FR-ADM-003  P0  Configuration of thresholds, confirmation depths, and
+                  registry data SHALL be admin-editable with audit and with
+                  a documented safe range per parameter.
+  FR-OBS-001  P0  Structured logging with a correlation ID propagated across
+                  every service hop of a trace.
+  FR-OBS-002  P0  Metrics: queue depth, provider health, trace stage
+                  durations, classifier abstention rate, cross-validation
+                  conflict rate, dossier generation failures.
+  FR-OBS-003  P1  Distributed tracing across services.
+  FR-OBS-004  P1  Alerting on: audit chain mismatch, reorg detected on cited
+                  evidence, provider disagreement spike, model drift signal.
+
+
+═════════════════════════════════════════════════════════════════════════════
+8.  NON-FUNCTIONAL REQUIREMENTS (NFR)
+═════════════════════════════════════════════════════════════════════════════
+
+8.1  PERFORMANCE
+
+  NFR-PERF-001  P0  BENCHMARK-FIRST POLICY. The team SHALL measure and
+                    publish end-to-end trace latency across a defined corpus
+                    before asserting any latency figure. The benchmark
+                    procedure: 50 seed addresses stratified by chain and by
+                    activity decile; report p50 / p90 / p99 per stage, with
+                    provider-latency isolated from compute latency. The SLO
+                    is then set at measured p90 × 1.25 and pinned in v1.1 of
+                    this PRD. No latency number is published before that.
+  NFR-PERF-002  P0  UI interactions unrelated to a running trace SHALL remain
+                    responsive (<200ms perceived) while traces execute; all
+                    heavy work is asynchronous and queued.
+  NFR-PERF-003  P0  Graph canvas SHALL sustain ≥30 FPS at 5k nodes/15k edges
+                    on integrated graphics.
+  NFR-PERF-004  P1  Repeat lookups of a previously-seen high-degree node
+                    SHALL be served from cache without re-querying providers.
+  NFR-PERF-005  P1  A single trace SHALL NOT be able to exhaust shared
+                    provider rate budget for other concurrent traces; per-
+                    tenant fair-share scheduling is required.
+
+8.2  SCALABILITY
+
+  NFR-SCAL-001  P0  Adding a blockchain SHALL require only: a new adapter
+                    module, a new shard, and a new worker pool. No core
+                    service code change. This is verified by an architecture
+                    fitness test in CI, not by assertion.
+  NFR-SCAL-002  P1  Worker pools SHALL scale horizontally per chain based on
+                    queue depth.
+  NFR-SCAL-003  P1  The system SHALL support at least 100 concurrent traces
+                    in the pilot configuration, with the scaling model
+                    documented for national volume.
+  NFR-SCAL-004  P2  Graph shards SHALL support online addition of read
+                    replicas without downtime.
+
+8.3  RELIABILITY & AVAILABILITY
+
+  NFR-REL-001  P0  No single provider outage SHALL cause total trace failure;
+                    the system degrades to SINGLE_SOURCE with visible flags.
+  NFR-REL-002  P0  All long-running work SHALL be resumable; a worker crash
+                    SHALL NOT lose a trace's completed stages.
+  NFR-REL-003  P0  Task processing SHALL be idempotent; a redelivered message
+                    SHALL NOT duplicate graph edges or dossiers.
+  NFR-REL-004  P1  Target availability for the pilot: 99.5% monthly for the
+                    application tier, with a documented maintenance window.
+  NFR-REL-005  P1  RPO ≤ 15 minutes, RTO ≤ 4 hours for the pilot; evidence
+                    artefacts specifically SHALL have RPO = 0 via
+                    write-through to durable object storage.
+
+8.4  MAINTAINABILITY & PORTABILITY
+
+  NFR-MNT-001  P0  All services containerised; local environment reproducible
+                    with a single compose command.
+  NFR-MNT-002  P0  Infrastructure-as-code for all non-local environments.
+  NFR-MNT-003  P0  No cloud-provider-proprietary service on the critical
+                    path, so the system can run on government cloud (e.g.
+                    MeghRaj/NIC) without re-architecture.
+  NFR-MNT-004  P1  Test coverage floor: 80% on evidence, proof, and legal
+                    modules; 60% elsewhere. Evidence code is the highest-risk
+                    code in the product and is treated as such.
+  NFR-MNT-005  P1  Every algorithmic parameter SHALL be externalised to
+                    configuration with documented safe ranges.
+
+8.5  USABILITY
+
+  NFR-USE-001  P0  A trained user with no blockchain background SHALL be able
+                    to complete Journey A unassisted after ≤2 hours of
+                    training, verified by usability testing with ≥5 subjects.
+  NFR-USE-002  P0  Every technical term visible in the UI SHALL have an
+                    inline plain-language definition on hover/tap.
+  NFR-USE-003  P0  Destructive or legally consequential actions SHALL require
+                    explicit confirmation naming the consequence.
+  NFR-USE-004  P1  Full functionality on 1366×768 laptop displays — the
+                    realistic hardware in district cyber cells, not 4K.
+
+8.6  ACCESSIBILITY
+
+  NFR-ACC-001  P0  WCAG 2.1 Level AA conformance for all screens.
+  NFR-ACC-002  P0  Colour SHALL never be the sole carrier of meaning;
+                    classification and confidence SHALL also encode via
+                    shape, label, or pattern.
+  NFR-ACC-003  P0  A tabular equivalent SHALL exist for every graph view.
+  NFR-ACC-004  P1  Full keyboard operability including the graph canvas.
+
+8.7  INTEROPERABILITY
+
+  NFR-INT-001  P0  All external integrations behind versioned interfaces with
+                    mock implementations.
+  NFR-INT-002  P1  Machine-readable evidence bundle in a documented, stable
+                    JSON schema with its own versioning.
+
+8.8  ENVIRONMENTAL / OPERATIONAL FOOTPRINT
+
+  NFR-ENV-001  P2  The system SHALL run on commodity government cloud compute
+                    without dedicated forensic hardware; GPU is required only
+                    for model training, not for inference at pilot scale, and
+                    the CPU-inference path SHALL be maintained and tested.
+
+
+═════════════════════════════════════════════════════════════════════════════
+9.  LEGAL, EVIDENTIARY & COMPLIANCE REQUIREMENTS (LR)
+═════════════════════════════════════════════════════════════════════════════
+
+  LR-001  P0  LAWFUL AUTHORITY GATE. No trace SHALL execute without a
+              recorded lawful-authority reference (FIR / NCRP acknowledgement
+              / written authorisation). This is enforced in code, not policy.
+
+  LR-002  P0  PURPOSE LIMITATION. The system SHALL NOT support open-ended
+              exploration of addresses unconnected to a registered case. No
+              "explore any wallet" mode ships.
+
+  LR-003  P0  CHAIN OF CUSTODY. Every evidence artefact SHALL record: origin
+              source, fetch time, fetching principal, transformations applied
+              with versions, and every access event thereafter.
+
+  LR-004  P0  NO AUTOMATED LEGAL ACTION. Every outbound legal instrument
+              SHALL carry a human digital signature from an authorised
+              officer. There SHALL be no configuration that disables this.
+
+  LR-005  P0  SECTION 63 BSA / 65B CERTIFICATE. Generated per FR-EVD; format
+              admin-versionable; legal-cell review documented before
+              operational use.
+
+  LR-006  P0  DATA MINIMISATION IN OUTBOUND REQUESTS. A disclosure request
+              SHALL contain only the addresses, transactions, and time window
+              necessary. Over-broad requests SHALL be blocked by a
+              scope-check rule with an explanatory message.
+
+  LR-007  P0  NO PERSONAL-DATA SPECULATION. The system SHALL NOT infer,
+              store, or display real-world identity, demographic attributes,
+              or behavioural profiles of individuals. It attributes addresses
+              to SERVICES, not to persons. Identity determination is the
+              VASP's KYC function under lawful process.
+
+  LR-008  P0  RETENTION. Case data retention SHALL follow the deploying
+              agency's records policy, configurable per deployment, with
+              legal-hold support that suspends deletion.
+
+  LR-009  P1  RIGHT OF INDEPENDENT VERIFICATION. The verification utility and
+              its algorithm SHALL be publishable so that defence experts can
+              re-verify without access to PHANTASM.
+
+  LR-010  P1  DISCLOSURE OF LIMITATIONS. Every dossier SHALL state, in plain
+              language: what the tool does not do, the measured accuracy of
+              the models used with their evaluation dataset, known failure
+              modes, and the fact that attribution identifies a service, not
+              a person.
+
+  LR-011  P1  FATF TRAVEL RULE ALIGNMENT. Where inter-VASP originator/
+              beneficiary data is lawfully available, the system SHALL be
+              able to attach it as corroboration, clearly separated from
+              on-chain-derived facts.
+
+  LR-012  P2  CROSS-BORDER DATA HANDLING. Case data SHALL remain within the
+              deployment's sovereign boundary; provider queries SHALL be
+              reviewed for what they leak (querying an address at a foreign
+              API discloses investigative interest — this is a real
+              operational-security exposure and MUST be documented, with a
+              self-hosted-node option offered for sensitive cases).
+
+  LR-013  P1  ADVERSE-OUTCOME PROCEDURE. A documented process SHALL exist for
+              correcting and notifying when an attribution is later found
+              wrong, including erratum generation to any VASP already served.
+
+
+═════════════════════════════════════════════════════════════════════════════
+10.  SECURITY & PRIVACY REQUIREMENTS (SR)
+═════════════════════════════════════════════════════════════════════════════
+
+  SR-001  P0  AUTHENTICATION. MFA mandatory for all human users. Integration
+              with the agency's identity provider (SAML/OIDC) required for
+              pilot; local accounts only in development.
+  SR-002  P0  AUTHORISATION. Deny-by-default. Every API endpoint declares its
+              required role and jurisdictional scope; a missing declaration
+              fails the build.
+  SR-003  P0  TRANSPORT. TLS 1.3 everywhere including service-to-service.
+  SR-004  P0  AT-REST ENCRYPTION for all datastores and object storage.
+  SR-005  P0  SECRETS MANAGEMENT via a vault; no credentials in code, images,
+              or environment files committed to VCS. Automated secret
+              scanning in CI blocks merges.
+  SR-006  P0  SIGNING KEYS for dossiers and legal instruments SHALL live in
+              an HSM or equivalent managed key service; private key material
+              SHALL never be exportable to application memory in production.
+  SR-007  P0  INPUT VALIDATION on every external input, including provider
+              responses. A malicious or compromised provider response is an
+              assumed threat, not an impossible one.
+  SR-008  P0  NO EVALUATION OF UNTRUSTED CONTENT. Contract bytecode, token
+              metadata, and provider strings SHALL be treated as hostile
+              data: never executed, never rendered as raw HTML, always
+              escaped and length-bounded.
+  SR-009  P0  AUDIT IMMUTABILITY enforced by database-level constraints and
+              periodic hash-chain verification.
+  SR-010  P0  RATE LIMITING and anomaly detection on user actions to detect
+              insider misuse (e.g. an account tracing hundreds of unrelated
+              addresses).
+  SR-011  P1  THREAT MODEL. A STRIDE threat model SHALL be maintained for
+              each service and reviewed each phase gate. Priority threats:
+              (a) insider abuse for unlawful surveillance,
+              (b) evidence tampering to fabricate a case,
+              (c) provider compromise poisoning ingestion,
+              (d) exfiltration of case data revealing active investigations,
+              (e) DoS during the 24–72h critical window.
+  SR-012  P1  SUPPLY CHAIN. Dependency pinning, SBOM generation, and
+              vulnerability scanning in CI. Model artefacts are supply chain
+              too: they are hash-pinned and provenance-recorded.
+  SR-013  P1  PENETRATION TEST before any pilot deployment; findings above
+              medium severity block go-live.
+  SR-014  P2  OPSEC MODE. A configuration for sensitive cases that restricts
+              ingestion to self-hosted nodes so that no third-party provider
+              learns which addresses are under investigation.
+
+
+═════════════════════════════════════════════════════════════════════════════
+11.  DATA REQUIREMENTS & PROVENANCE
+═════════════════════════════════════════════════════════════════════════════
+
+11.1  DATA CLASSES
+
+  ┌──────────────────────┬──────────────┬───────────┬───────────────────────┐
+  │ Class                │ Mutability   │ Retention │ Sensitivity           │
+  ├──────────────────────┼──────────────┼───────────┼───────────────────────┤
+  │ On-chain facts       │ Immutable    │ Permanent │ Public                │
+  │ Merkle proofs        │ Immutable    │ Permanent │ Public                │
+  │ Classifications      │ Versioned    │ Permanent │ Internal              │
+  │ Confidence scores    │ Versioned    │ Permanent │ Internal              │
+  │ Case metadata        │ Mutable      │ Policy    │ RESTRICTED            │
+  │ Officer identity     │ Mutable      │ Policy    │ RESTRICTED            │
+  │ VASP registry        │ Versioned    │ Permanent │ Internal              │
+  │ Dossiers             │ Immutable    │ Policy+LH │ RESTRICTED            │
+  │ Audit log            │ Append-only  │ Permanent │ RESTRICTED            │
+  │ Model artefacts      │ Immutable    │ Permanent │ Internal              │
+  └──────────────────────┴──────────────┴───────────┴───────────────────────┘
+
+11.2  TRAINING DATA REQUIREMENTS
+
+  DR-001  P0  The prototype SHALL train and evaluate on the Elliptic dataset
+              (203,769 Bitcoin transactions, partially labelled) as the
+              public benchmark, and SHALL report metrics against published
+              baselines including MDST-GNN and TGN.
+  DR-002  P0  The team SHALL state explicitly, in the model card and in the
+              pitch, that Elliptic is INSUFFICIENT for production and that
+              FIU-IND-provided labelled Indian case data is required for
+              production fine-tuning. This limitation is disclosed, not hidden.
+  DR-003  P0  Train/validation/test splits SHALL be TEMPORAL, not random.
+              Random splits on transaction graphs leak future information and
+              inflate metrics — a random split here is a methodological
+              error a reviewer will catch.
+  DR-004  P0  Class imbalance SHALL be handled explicitly and the handling
+              method reported; headline accuracy on an imbalanced illicit-
+              detection task is a meaningless metric and SHALL NOT be the
+              primary reported figure. Report precision, recall, F1 on the
+              minority class, PR-AUC, and the confusion matrix.
+  DR-005  P1  Label provenance SHALL be recorded per label: dataset origin,
+              labelling authority, date, and confidence.
+  DR-006  P1  Synthetic augmentation, if used for rare typologies, SHALL be
+              flagged and its proportion reported; models trained with
+              synthetic data SHALL be evaluated on real-only test sets.
+  DR-007  P1  A fine-tuning pipeline SHALL exist from day one so that agency-
+              provided labels can be incorporated without re-architecture.
+  DR-008  P2  Analyst overrides SHALL be capturable as candidate labels but
+              SHALL require curator approval before entering a training set,
+              to prevent feedback-loop contamination where the model learns
+              its own past mistakes.
+
+11.3  DATA QUALITY GATES
+
+  DQ-001  Ingestion rejects a transaction lacking any canonical field.
+  DQ-002  Value fields are stored as exact integers in base units with the
+          asset's decimals recorded separately. Floating-point money is
+          prohibited system-wide.
+  DQ-003  Timestamps stored as UTC epoch plus block height; block height is
+          authoritative for ordering, timestamp is advisory.
+  DQ-004  Address strings stored in canonical, checksummed form per chain,
+          with the raw observed form retained.
+  DQ-005  Every record carries ingest_run_id for lineage.
+
+
+═════════════════════════════════════════════════════════════════════════════
+12.  EXTERNAL INTERFACE REQUIREMENTS
+═════════════════════════════════════════════════════════════════════════════
+
+12.1  INBOUND — CASE SOURCES
+
+  EI-001  P1  NCRP / CFCFRMS intake: accept case reference and seed addresses
+              via an authenticated API, behind an interface with a mock.
+  EI-002  P0  Manual entry via UI is always available and never dependent on
+              an external system being live.
+
+12.2  OUTBOUND — SAHYOG
+
+  EI-003  P0  SAHYOG connector interface: submit_request(), get_status(),
+              fetch_response(), list_nodal_officers(). Mock implementation
+              mandatory for prototype and clearly labelled.
+  EI-004  P0  Payload SHALL be scoped per recipient; no cross-VASP leakage.
+  EI-005  P1  Retry with idempotency keys so a network failure cannot cause
+              duplicate legal service.
+
+12.3  DATA PROVIDERS
+
+  EI-006  P0  Provider abstraction supporting at minimum: Etherscan-family
+              explorers, Alchemy, Blockchair, mempool.space, Bitquery, Dune.
+  EI-007  P0  Provider health scoring: rolling success rate, latency, and
+              disagreement rate. A provider with a rising disagreement rate
+              is automatically demoted and an alert raised.
+  EI-008  P1  Provider cost accounting per trace, surfaced to admins, because
+              an agency will need to budget API spend.
+
+12.4  IDENTITY
+
+  EI-009  P0  SAML 2.0 / OIDC integration for agency SSO.
+  EI-010  P1  Support for hardware token / smart card second factor, which is
+              realistic for signing officers in government deployments.
+
+
+═════════════════════════════════════════════════════════════════════════════
+13.  ML MODEL REQUIREMENTS & EVALUATION CONTRACT
+═════════════════════════════════════════════════════════════════════════════
+
+13.1  MODELS IN SCOPE
+
+  M1  HGT node classifier      — heterogeneous entity typing
+  M2  R-GCN relational encoder — relation-aware aggregation (may be fused
+                                 with M1 as a joint encoder; the choice must
+                                 be recorded, not left ambiguous)
+  M3  TGN temporal memory      — dynamic embeddings on streaming txns
+  M4  Hawkes/Neural-Hawkes TPP — burst and structuring detection
+  M5  Calibrator               — post-hoc probability calibration (isotonic
+                                 or temperature scaling) — MANDATORY, because
+                                 raw GNN softmax outputs are not calibrated
+                                 probabilities and presenting them to a court
+                                 as such would be indefensible.
+
+13.2  EVALUATION CONTRACT (non-negotiable)
+
+  EV-001  Temporal splits only.
+  EV-002  Primary metrics: minority-class precision, recall, F1, PR-AUC,
+          plus calibration (ECE, Brier) for every model whose output is
+          shown as a probability.
+  EV-003  Report confidence intervals via bootstrap; a single point metric
+          from one run is not a result.
+  EV-004  Report performance stratified by wallet activity decile, because
+          sparse zero-day wallets are the hard case and an aggregate number
+          hides that.
+  EV-005  Ablation table required: full model vs without-TPP, without-TGN,
+          without-heterogeneous-typing, vs a well-tuned gradient-boosting
+          baseline on engineered features. If the simple baseline wins on a
+          component, that is a finding to report, not to suppress.
+  EV-006  Baseline comparison against published Elliptic results (Weber et
+          al. GCN baselines, MDST-GNN, TGN) using the same split protocol as
+          the published work where reproducible; if the protocol differs,
+          state that the comparison is indicative, not head-to-head.
+  EV-007  Negative results SHALL be reported. A model card without a
+          "where this fails" section does not pass review.
+
+13.3  MODEL GOVERNANCE
+
+  MG-001  Immutable, hash-addressed artefacts.
+  MG-002  Model card mandatory pre-promotion.
+  MG-003  Two-person promotion approval.
+  MG-004  Drift monitoring on input feature distributions and abstention rate.
+  MG-005  Kill switch: an ACTIVE model can be demoted instantly, reverting to
+          the previous version, without a deployment.
+  MG-006  Traces pin model versions permanently.
+
+
+═════════════════════════════════════════════════════════════════════════════
+14.  ANALYTICS, SUCCESS METRICS & KPIs
+═════════════════════════════════════════════════════════════════════════════
+
+14.1  PRODUCT KPIs (post-pilot)
+
+  ┌────────────────────────────────────┬─────────────────────────────────────┐
+  │ KPI                                │ Definition / target basis           │
+  ├────────────────────────────────────┼─────────────────────────────────────┤
+  │ Time-to-first-disclosure-request   │ Case creation → SIGNED. Target set  │
+  │                                    │ after baseline measurement.         │
+  │ Attribution acceptance rate        │ % machine attributions accepted     │
+  │                                    │ unchanged by an analyst.            │
+  │ Analyst override rate              │ Inverse health signal on the model. │
+  │ VASP acknowledgement rate          │ % dispatched requests acknowledged. │
+  │ VASP rejection-for-scope rate      │ Measures request quality; target ↓. │
+  │ Confidence calibration error       │ ECE on resolved cases. Target ↓.    │
+  │ False-attribution incidents        │ Count. Target 0; any occurrence      │
+  │                                    │ triggers LR-013 procedure.          │
+  │ Traces completed without expert    │ Core mission metric for G3.          │
+  │ Cross-validation conflict rate     │ Data-integrity health.               │
+  └────────────────────────────────────┴─────────────────────────────────────┘
+
+14.2  METRICS EXPLICITLY NOT USED
+  - "Accuracy" as a headline on an imbalanced task.
+  - Any latency figure not measured on the actual build.
+  - Any recovery-rate claim attributable to factors outside the tool.
+  - Vanity graph-size metrics (nodes indexed) with no user outcome attached.
+
+14.3  DEMO-DAY EVIDENCE PACK (for SIH judging)
+  - Live end-to-end trace on a documented historical public incident.
+  - Measured Elliptic test-split metrics with the ablation table.
+  - Latency-vs-accuracy trade-off curve (Monte Carlo sample count sweep).
+  - A deliberately-failing mixer case demonstrating honest termination.
+  - Independent verification of one Merkle proof performed live using the
+    standalone verifier, ideally by a judge.
+
+
+═════════════════════════════════════════════════════════════════════════════
+15.  ASSUMPTIONS, DEPENDENCIES & CONSTRAINTS
+═════════════════════════════════════════════════════════════════════════════
+
+15.1  ASSUMPTIONS
+  A1  Public block-explorer APIs remain available at free/low tiers adequate
+      for prototype volumes.
+  A2  The Elliptic dataset remains publicly accessible for benchmarking.
+  A3  SAHYOG exposes, or will expose, a programmatic channel for LEA
+      disclosure requests. Until confirmed, the mock connector is the only
+      integration and is labelled as such.
+  A4  The deploying agency provides lawful-authority references and officer
+      identity via its own systems.
+  A5  Judges/reviewers value honest limitation disclosure over inflated
+      accuracy claims. The entire product narrative is built on this.
+
+15.2  DEPENDENCIES
+  D1  Third-party RPC/explorer providers and their rate limits.
+  D2  Graph database licensing terms for the chosen engine at scale.
+  D3  GPU availability for training (not required for pilot inference).
+  D4  Legal-cell review of statutory templates.
+  D5  FIU-IND registry data currency — requires a human process to update.
+
+15.3  CONSTRAINTS
+  C1  SIH prototype timeline is days, not months. Phases 1–3 of the
+      implementation plan constitute the demonstrable prototype; Phases 4–5
+      are the credible post-hackathon roadmap and MUST be presented as such
+      rather than claimed as built.
+  C2  No access to real LEA case data during the hackathon. All demos use
+      public historical incidents and public datasets.
+  C3  Target hardware in the field is modest; CPU inference path must work.
+  C4  Government cloud constraints prohibit dependence on proprietary managed
+      ML services on the critical path.
+
+
+═════════════════════════════════════════════════════════════════════════════
+16.  RISK REGISTER
+═════════════════════════════════════════════════════════════════════════════
+
+  Severity: S1 catastrophic / S2 major / S3 moderate. L: likelihood H/M/L.
+
+  ┌─────────┬────┬───┬──────────────────────────┬────────────────────────────┐
+  │ ID      │ Sev│ L │ Risk                     │ Mitigation / owner         │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-001 │ S1 │ M │ Wrong VASP attribution   │ Confidence gate + human    │
+  │         │    │   │ triggers a wrongful      │ signature + Merkle audit + │
+  │         │    │   │ freeze                   │ LR-013 erratum procedure.  │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-002 │ S1 │ L │ Insider misuse for       │ Lawful-authority gate,     │
+  │         │    │   │ unlawful surveillance    │ purpose limitation, usage  │
+  │         │    │   │                          │ anomaly detection, audit.  │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-003 │ S1 │ L │ Evidence tampering       │ Hash-chained audit,        │
+  │         │    │   │ allegation succeeds      │ immutable artefacts, HSM   │
+  │         │    │   │                          │ signing, external verifier.│
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-004 │ S2 │ H │ Mixer defeats the trace  │ Declare honestly; flag and │
+  │         │    │   │                          │ correlate; never fabricate.│
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-005 │ S2 │ H │ Provider rate limits     │ Multi-source, caching,     │
+  │         │    │   │ throttle demo/pilot      │ fair-share scheduling,     │
+  │         │    │   │                          │ self-hosted node option.   │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-006 │ S2 │ M │ Model overfits Elliptic; │ Temporal splits, ablations,│
+  │         │    │   │ fails on other chains    │ per-chain eval, honest     │
+  │         │    │   │                          │ scope statement.           │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-007 │ S2 │ M │ Reorg invalidates cited  │ Confirmation-depth gate +  │
+  │         │    │   │ evidence post-dispatch   │ re-validation job + errata.│
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-008 │ S2 │ M │ Merkle proof form is     │ Per-chain proof strategy   │
+  │         │    │   │ misapplied per chain     │ documented and reviewed;   │
+  │         │    │   │                          │ honest labelling where a   │
+  │         │    │   │                          │ classic proof doesn't fit. │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-009 │ S3 │ H │ SAHYOG API access not    │ Interface + mock; pitch as │
+  │         │    │   │ granted for prototype    │ integration-ready, labelled│
+  │         │    │   │                          │ MOCK in the demo UI.       │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-010 │ S3 │ M │ Querying providers leaks │ OPSEC mode with self-hosted│
+  │         │    │   │ investigative interest   │ nodes; documented risk.    │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-011 │ S2 │ M │ Feedback loop: model     │ Curator approval gate on   │
+  │         │    │   │ trains on its own errors │ override-derived labels.   │
+  ├─────────┼────┼───┼──────────────────────────┼────────────────────────────┤
+  │ RSK-012 │ S3 │ H │ Scope creep into full    │ NG1 enforced at review;    │
+  │         │    │   │ ownership clustering     │ every PR checked against   │
+  │         │    │   │                          │ the section 1.2 sentence.  │
+  └─────────┴────┴───┴──────────────────────────┴────────────────────────────┘
+
+
+═════════════════════════════════════════════════════════════════════════════
+17.  OUT OF SCOPE (v1)
+═════════════════════════════════════════════════════════════════════════════
+
+  Restated from §3.2 with rationale, because scope discipline is the single
+  biggest determinant of whether this ships:
+
+  - Full entity/ownership clustering             → harder problem, slower,
+                                                    and unnecessary for the
+                                                    legal objective.
+  - Privacy-coin tracing                          → architecturally infeasible
+                                                    to do honestly.
+  - Automated freezing / automated legal action   → legally impermissible.
+  - Real-time mempool interception                → pre-finality data cannot
+                                                    be evidence.
+  - Individual risk scoring of persons            → LR-007 prohibits it.
+  - Fiat off-ramp banking correlation             → different data regime,
+                                                    different legal channel.
+  - Mobile native applications                    → responsive web is
+                                                    sufficient for v1.
+  - Multi-tenancy across agencies with shared     → data-sharing agreements
+    case visibility                                 must precede the feature.
+
+
+═════════════════════════════════════════════════════════════════════════════
+18.  RELEASE CRITERIA / DEFINITION OF DONE
+═════════════════════════════════════════════════════════════════════════════
+
+18.1  PROTOTYPE (SIH DEMO) RELEASE CRITERIA
+  ☐ Journey A completes end-to-end on ≥2 chains (one UTXO, one account).
+  ☐ Journey B (mixer honest failure) demonstrable.
+  ☐ Every P0 FR in Ingestion, Classification, Attribution, Confidence, and
+    Evidence implemented at prototype fidelity.
+  ☐ Merkle proof independently verifiable by the standalone utility, live.
+  ☐ Measured metrics reported with ablation table and temporal splits.
+  ☐ SAHYOG mock connector working and visibly labelled MOCK.
+  ☐ Limitations section present and non-removable in every dossier.
+  ☐ No hardcoded statistic without a citation field.
+  ☐ Reproducibility check passes: same inputs → identical output.
+
+18.2  PILOT RELEASE CRITERIA (adds)
+  ☐ SSO, MFA, RBAC, jurisdictional scoping enforced.
+  ☐ Hash-chained audit log with daily integrity verification.
+  ☐ HSM-backed signing.
+  ☐ Penetration test passed with no open high/critical findings.
+  ☐ Legal-cell sign-off on statutory templates.
+  ☐ Calibration report published per active model.
+  ☐ Documented latency SLO derived from measurement (NFR-PERF-001).
+  ☐ DR/backup drill executed successfully.
+  ☐ Usability test passed with ≥5 non-specialist officers.
+
+
+═════════════════════════════════════════════════════════════════════════════
+19.  OPEN QUESTIONS
+═════════════════════════════════════════════════════════════════════════════
+
+  OQ-01  Does SAHYOG expose a programmatic submission channel, and under what
+         authorisation regime? Until answered, mock only.
+  OQ-02  Which statutory template version is current for Sec 63 BSA
+         certificates in the target jurisdiction? Requires legal-cell input.
+  OQ-03  Will FIU-IND share labelled case data for fine-tuning, and under
+         what data-handling agreement?
+  OQ-04  What is the agency's records-retention schedule for machine-derived
+         investigative artefacts?
+  OQ-05  Preferred graph engine given government-cloud licensing constraints?
+  OQ-06  Is a self-hosted-node deployment option acceptable operationally for
+         OPSEC-sensitive cases, and who funds it?
+  OQ-07  What value-attribution accounting method does the prosecuting
+         authority prefer (proportional / FIFO / poison)? Different courts
+         may have different expectations.
+  OQ-08  Acceptable action threshold for confidence — set by whom, and can it
+         be varied per case type?
+
+
+═════════════════════════════════════════════════════════════════════════════
+20.  APPENDIX A — GLOSSARY
+═════════════════════════════════════════════════════════════════════════════
+
+  ABSORPTION STATE   A classified custodial node at which path search stops
+                     rather than expanding into its many counterparties.
+  BSA                Bharatiya Sakshya Adhiniyam, 2023 (Indian evidence law).
+  BNSS               Bharatiya Nagarik Suraksha Sanhita, 2023.
+  CO-SPEND HEURISTIC UTXO inference that inputs spent together in one
+                     transaction share a controller.
+  EOA                Externally Owned Account (key-controlled, not a contract).
+  FIU-IND            Financial Intelligence Unit — India.
+  HGT                Heterogeneous Graph Transformer (Hu et al., WWW 2020).
+  I4C                Indian Cyber Crime Coordination Centre.
+  MERKLE PROOF       O(log N) sibling-hash path proving a transaction's
+                     inclusion under a block's Merkle root.
+  MLAT               Mutual Legal Assistance Treaty.
+  NCRP               National Cybercrime Reporting Portal.
+  PEEL CHAIN         Laundering pattern where a large sum sheds small amounts
+                     across a long chain of hops.
+  PPR                Personalised PageRank.
+  R-GCN              Relational Graph Convolutional Network.
+  RWR                Random Walk with Restart.
+  SAHYOG             MHA/I4C portal for lawful requests to intermediaries.
+  SMURFING           Structuring value into many small transfers to evade
+                     thresholds and detection.
+  TGN                Temporal Graph Network.
+  TPP                Temporal Point Process.
+  UTXO               Unspent Transaction Output model (Bitcoin-family).
+  VASP               Virtual Asset Service Provider.
+  VDA SP             Virtual Digital Asset Service Provider (Indian term).
+
+
+═════════════════════════════════════════════════════════════════════════════
+21.  APPENDIX B — REQUIREMENTS TRACEABILITY MATRIX (extract)
+═════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────┬──────────────┬────────────┬──────────┬────────────────────┐
+  │ PS Gap       │ Requirement  │ User story │ Phase    │ Verification       │
+  ├──────────────┼──────────────┼────────────┼──────────┼────────────────────┤
+  │ Graph        │ FR-CLS-003   │ US-CLS-006 │ Phase 2  │ Expansion-count    │
+  │ explosion    │ FR-ATT-003   │ US-ATT-007 │ Phase 3  │ benchmark vs BFS   │
+  ├──────────────┼──────────────┼────────────┼──────────┼────────────────────┤
+  │ Obfuscation  │ FR-TPP-001/2 │ US-TPP-005 │ Phase 2  │ Labelled peel-chain│
+  │              │ FR-CLS-006   │            │          │ detection recall   │
+  ├──────────────┼──────────────┼────────────┼──────────┼────────────────────┤
+  │ Legal        │ FR-EVD-001..8│ US-EVD-009 │ Phase 4  │ Live third-party   │
+  │ disconnect   │ FR-SHY-001..5│ US-SHY-011 │ Phase 4  │ proof verification │
+  ├──────────────┼──────────────┼────────────┼──────────┼────────────────────┤
+  │ Chain-model  │ FR-ING-003/4 │ US-ING-002 │ Phase 1  │ Per-chain-family   │
+  │ blindness    │ FR-GRF-001/2 │            │ Phase 1  │ metric parity test │
+  └──────────────┴──────────────┴────────────┴──────────┴────────────────────┘
+
+  Full matrix maintained separately and updated at every phase gate.
+
+─────────────────────────────────────────────────────────────────────────────
+                          END OF PRD — PHANTASM-PRD-v1.0
+─────────────────────────────────────────────────────────────────────────────

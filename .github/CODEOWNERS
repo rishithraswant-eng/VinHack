@@ -1,0 +1,15 @@
+# CODEOWNERS for PHANTASM (SIH26182)
+# Enforces Engineering Standard ES-06:
+# Migrations are forward-only and reviewed; any migration touching an evidence-bearing table needs a second reviewer.
+
+# Default maintainers
+* @phantasm-sih/core-team
+
+# Migrations require strict two-reviewer approval
+/backend/alembic/ @phantasm-sih/lead-architect @phantasm-sih/evidence-lead
+/backend/app/models/canonical.py @phantasm-sih/lead-architect @phantasm-sih/evidence-lead
+/backend/app/audit/ @phantasm-sih/lead-architect @phantasm-sih/evidence-lead
+
+# Statutory and disclosure templates require legal-technical sign-off
+/backend/app/dossier/ @phantasm-sih/legal-technical-lead
+/backend/app/sahyog/ @phantasm-sih/legal-technical-lead
