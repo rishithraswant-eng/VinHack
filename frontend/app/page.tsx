@@ -5,11 +5,13 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "./components/layout/AppShell";
 import CaseWizard from "./components/cases/CaseWizard";
 import CaseWorkspace from "./components/cases/CaseWorkspace";
+import LandingPage from "./components/landing/LandingPage";
 
 function HomeContent() {
   const searchParams = useSearchParams();
   const [activeCase, setActiveCase] = useState<{caseId: string, seedAddress: string, firNumber?: string, ioDesignation?: string} | null>(null);
   const [currentStep, setCurrentStep] = useState<number>(1);
+  const [showLanding, setShowLanding] = useState<boolean>(true);
 
   useEffect(() => {
     const caseId = searchParams?.get('caseId');
@@ -19,6 +21,10 @@ function HomeContent() {
       setActiveCase({ caseId, seedAddress });
     }
   }, [searchParams]);
+
+  if (showLanding) {
+    return <LandingPage onLaunch={() => setShowLanding(false)} />;
+  }
 
   return (
     <AppShell 
