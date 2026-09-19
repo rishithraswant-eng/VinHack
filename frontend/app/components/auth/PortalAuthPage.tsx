@@ -61,8 +61,12 @@ export default function PortalAuthPage({
       {/* Top Institutional Header */}
       <header className="relative z-10 w-full bg-white border-b border-slate-200 px-6 sm:px-8 py-4 flex items-center justify-between shadow-2xs">
         <div className="flex items-center space-x-3.5">
-          <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center shadow-xs text-[#1B729E]">
-            <Hexagon className="w-5 h-5" strokeWidth={2.2} />
+          <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center shadow-xs overflow-hidden p-1 shrink-0">
+            <img 
+              src="/wolf-icon-transparent.png" 
+              alt="PHANTASM Logo" 
+              className="w-full h-full object-contain filter drop-shadow-[0_0_8px_rgba(0,229,255,0.4)]"
+            />
           </div>
           <div>
             <div className="text-base font-bold tracking-tight text-slate-900">

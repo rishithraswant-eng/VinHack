@@ -19,8 +19,13 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "PHANTASM",
-  description: "Graph Resolution Engine",
+  title: "PHANTASM — Track. Hunt. Secure.",
+  description: "Advanced Digital Asset Forensics & Graph Attribution Engine",
+  icons: {
+    icon: "/wolf-icon-transparent.png",
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
+  },
 };
 
 export default function RootLayout({

@@ -63,10 +63,12 @@ export default function AppShell({
         
         {/* Brand Header */}
         <div className="h-20 flex items-center px-6 border-b border-slate-200 space-x-3.5">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-xs border ${
-            isCitizen ? 'bg-sky-50 border-sky-200 text-[#1B729E]' : 'bg-indigo-50 border-indigo-200 text-indigo-700'
-          }`}>
-            <Hexagon className="w-5 h-5" strokeWidth={2.2} />
+          <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center shadow-xs overflow-hidden p-1 shrink-0">
+            <img 
+              src="/wolf-icon-transparent.png" 
+              alt="PHANTASM Logo" 
+              className="w-full h-full object-contain filter drop-shadow-[0_0_8px_rgba(0,229,255,0.4)]"
+            />
           </div>
           <div className="flex flex-col">
             <div className="flex items-center gap-1.5">

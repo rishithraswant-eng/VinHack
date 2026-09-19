@@ -21,6 +21,11 @@ export default function LoginForm() {
   return (
     <div className="flex items-center justify-center min-h-screen bg-slate-900">
       <div className="p-8 bg-slate-800 shadow-xl rounded-2xl w-full max-w-md border border-slate-700">
+        <div className="flex justify-center mb-4">
+          <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-700 flex items-center justify-center p-1.5 shadow-lg">
+            <img src="/wolf-icon-transparent.png" alt="PHANTASM" className="w-full h-full object-contain filter drop-shadow-[0_0_10px_rgba(0,229,255,0.5)]" />
+          </div>
+        </div>
         <h1 className="text-2xl font-bold text-white mb-6 text-center">PHANTASM Secure Login</h1>
         
         {error && (
