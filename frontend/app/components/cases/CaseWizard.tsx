@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Search, Link2, AlertCircle, ArrowRight } from 'lucide-react';
 
-export default function CaseWizard() {
+export default function CaseWizard({ onComplete }: { onComplete?: (caseId: string, seedAddress: string) => void }) {
   const [authority, setAuthority] = useState({
     statuteRef: '',
     firNumber: '',
@@ -143,6 +143,10 @@ export default function CaseWizard() {
 
               <div className="mt-8 flex justify-end">
                 <button 
+                  onClick={() => {
+                    const newCaseId = `PHT-${Math.floor(1000 + Math.random() * 9000)}`;
+                    onComplete?.(newCaseId, seedAddress);
+                  }}
                   disabled={!isAuthorityValid || !seedAddress}
                   className="bg-phantasm-cyan text-[#0A0F1D] font-bold px-6 py-3 rounded-lg flex items-center transition-all hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(0,229,255,0.3)] disabled:shadow-none"
                 >

@@ -2,7 +2,7 @@ import base58
 import bech32
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
-from backend.app.adapters.base import ChainAdapter
+from app.adapters.base import ChainAdapter
 
 def bech32m_verify_checksum(hrp, data):
     return bech32.bech32_polymod(bech32.bech32_hrp_expand(hrp) + data) == 0x2bc830a3

@@ -1,6 +1,6 @@
 import pytest
 from sqlalchemy import CheckConstraint
-from backend.app.models.canonical import Case
+from app.models.canonical import Case
 
 def test_case_authority_gate_constraint_exists():
     # Verify the CheckConstraint for lawful authority gate exists in AST/reflection

@@ -27,7 +27,7 @@ class DossierGenerator:
         canvas.restoreState()
 
     def generate_dossier(self, case_ref: str, fir_num: str, io_desig: str, evidence: SealedEvidence) -> str:
-        filename = os.path.join(self.output_dir, f"dossier_{evidence.snapshot_id}.pdf")
+        filename = os.path.join(self.output_dir, f"dossier_{case_ref}.pdf")
         doc = SimpleDocTemplate(filename, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=60)
         
         elements = []

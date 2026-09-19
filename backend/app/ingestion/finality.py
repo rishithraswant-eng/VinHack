@@ -1,4 +1,4 @@
-from backend.app.models.canonical import ValidationStatus
+from app.models.canonical import ValidationStatus
 from typing import Dict
 
 class FinalityGate:

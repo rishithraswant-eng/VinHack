@@ -1,9 +1,19 @@
+import os
+import logging
+import httpx
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
 from eth_utils import is_address, to_checksum_address
-from backend.app.adapters.base import ChainAdapter
+from app.adapters.base import ChainAdapter
+from app.core.ratelimit import AsyncTokenBucket
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class EthereumAdapter(ChainAdapter):
+    def __init__(self):
+        self.rate_limiter = AsyncTokenBucket(capacity=5, fill_rate=5)
+        
     def detect_address(self, raw_address: str) -> bool:
         if not raw_address:
             return False
@@ -17,8 +27,46 @@ class EthereumAdapter(ChainAdapter):
         return to_checksum_address(raw_address)
         
     async def fetch_address_activity(self, address: str, start_time: Optional[float] = None, end_time: Optional[float] = None) -> List[Dict[str, Any]]:
-        # Mock implementation
-        return []
+        api_key = settings.ETHERSCAN_API_KEY or "YourApiKeyToken"
+        if api_key == "YourApiKeyToken":
+            logger.info("ETHERSCAN_API_KEY not set - using default key (may be rate limited or deprecated)")
+            
+        await self.rate_limiter.consume(1.0)
+        
+        url = f"https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist&address={address}&sort=asc&apikey={api_key}"
+        
+        logger.info(f"Fetching from Etherscan: {address}")
+        logger.info(f"Etherscan HTTP call: {url}")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+            
+        if data.get("status") != "1":
+            logger.warning(f"Etherscan API error: {data.get('message')}. Raw API return: {data}")
+            return []
+            
+        results = data.get("result", [])
+        logger.info(f"Etherscan returned {len(results)} transactions.")
+        if len(results) > 0:
+            first_tx = results[0]
+            logger.info(f"First transaction: hash={first_tx.get('hash')}, to={first_tx.get('to')}")
+            
+        canonical_txs = []
+        for tx in results:
+            canonical_txs.append({
+                "tx_hash": tx.get("hash"),
+                "block_number": int(tx.get("blockNumber", 0)),
+                "timestamp": int(tx.get("timeStamp", 0)),
+                "inputs": [{"address": to_checksum_address(tx.get("from")) if tx.get("from") else None, "value_base": Decimal(tx.get("value", 0))}],
+                "outputs": [{"address": to_checksum_address(tx.get("to")) if tx.get("to") else None, "value_base": Decimal(tx.get("value", 0))}],
+                "fee_base": Decimal(tx.get("gasUsed", 0)) * Decimal(tx.get("gasPrice", 0)),
+                "is_error": tx.get("isError") == "1",
+                "nonce": tx.get("nonce", 0)
+            })
+            
+        return canonical_txs
         
     async def fetch_transaction(self, tx_hash: str) -> Dict[str, Any]:
         # Mock implementation

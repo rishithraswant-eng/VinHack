@@ -1,5 +1,5 @@
 import pytest
-from backend.app.adapters.ethereum import EthereumAdapter
+from app.adapters.ethereum import EthereumAdapter
 
 def test_ethereum_detect_address():
     adapter = EthereumAdapter()

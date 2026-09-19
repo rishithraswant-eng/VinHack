@@ -3,7 +3,7 @@ import json
 from typing import List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from backend.app.models.canonical import AuditLog
+from app.models.canonical import AuditLog
 
 class AuditVerificationException(Exception):
     pass

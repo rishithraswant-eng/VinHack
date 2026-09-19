@@ -1,5 +1,5 @@
 import pytest
-from backend.app.adapters.bitcoin import BitcoinAdapter
+from app.adapters.bitcoin import BitcoinAdapter
 
 def test_bitcoin_detect_address():
     adapter = BitcoinAdapter()

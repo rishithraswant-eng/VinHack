@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, List, Optional
-from backend.app.core.config import settings
+from app.core.config import settings
 try:
     from neo4j import AsyncGraphDatabase, AsyncSession
 except ImportError:

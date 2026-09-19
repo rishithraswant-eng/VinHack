@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.logging import CorrelationIdMiddleware, setup_logging
+from app.api.routers import trace, cases
 
 # Initialize structured logging
 setup_logging(log_level=settings.LOG_LEVEL, service_name="phantasm-api")
@@ -36,6 +37,9 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+app.include_router(cases.router, prefix=settings.API_V1_STR, tags=["cases"])
+app.include_router(trace.router, prefix=settings.API_V1_STR, tags=["traces"])
 
 
 @app.get("/health", tags=["System"])

@@ -1,5 +1,5 @@
 import redis.asyncio as redis
-from backend.app.core.config import settings
+from app.core.config import settings
 
 class RedisClient:
     def __init__(self):

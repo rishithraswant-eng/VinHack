@@ -1,8 +1,8 @@
 import hashlib
 import json
 from typing import Dict, Any, List, Tuple, Optional
-from backend.app.models.canonical import ValidationStatus
-from backend.app.core.ratelimit import AsyncTokenBucket, with_exponential_backoff
+from app.models.canonical import ValidationStatus
+from app.core.ratelimit import AsyncTokenBucket, with_exponential_backoff
 
 class CrossValidator:
     def __init__(self, token_bucket: AsyncTokenBucket = None):
